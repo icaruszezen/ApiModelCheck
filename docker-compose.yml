@@ -1,0 +1,18 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      ADMIN_USERNAME: admin
+      # 一定要改成你自己的密码
+      ADMIN_PASSWORD: change-me
+      # 上游要走代理时打开下面两行
+      # NODE_USE_ENV_PROXY: "1"
+      # HTTPS_PROXY: http://host.docker.internal:7890
+    volumes:
+      - amc-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  amc-data:
