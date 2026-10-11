@@ -50,6 +50,7 @@ import {
   type ModelFormState,
 } from "./model-form";
 import { modelLabel } from "./model-list";
+import { useSaveError } from "./shell-session";
 import { errorMessage } from "./ui";
 
 export interface ModelEditorProps {
@@ -90,7 +91,9 @@ export function ModelEditor({
   // 第一次点保存之后才显示错误，之后随输入实时更新
   const [attempted, setAttempted] = useState(false);
   const [saving, setSaving] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
+  // 因为登录过期没保存上的提示，重新登录后自己收起
+  const saveError = useSaveError();
+  const serverError = saveError.message;
   const alertRef = useRef<HTMLDivElement>(null);
 
   const [upstream, setUpstream] = useState<UpstreamState | null>(null);
@@ -175,7 +178,7 @@ export function ModelEditor({
       return;
     }
     setSaving(true);
-    setServerError(null);
+    saveError.clear();
     try {
       const saved = model
         ? await adminApi.updateModel(model.id, built.input)
@@ -189,7 +192,7 @@ export function ModelEditor({
       onSaved(saved, model === null);
       onOpenChange(false);
     } catch (error) {
-      setServerError(errorMessage(error));
+      saveError.fail(error);
     } finally {
       setSaving(false);
     }
@@ -235,7 +238,7 @@ export function ModelEditor({
             ref={alertRef}
             tone="danger"
             title="没有保存成功"
-            onClose={() => setServerError(null)}
+            onClose={saveError.clear}
           >
             {serverError}
           </Alert>
@@ -471,7 +474,7 @@ export function ModelEditor({
               label="最大输出 tokens"
               controlId={fieldId("maxTokens")}
               error={errors.maxTokens}
-              help="留空则不传；Anthropic 接口必须传，留空时用 8192"
+              help="留空则不传。Chat Completions 渠道上的 OpenAI o 系列、GPT-5 会自动改用 max_completion_tokens；Anthropic 接口必须传，留空时用 8192。"
             >
               <Input
                 inputMode="numeric"

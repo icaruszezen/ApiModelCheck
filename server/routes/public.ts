@@ -26,8 +26,8 @@ export function publicRoutes({ repo, runtime }: PublicRoutesDeps) {
     if (limit === null) {
       return c.json({ error: "limit 必须是正整数" }, 400);
     }
-    // 停用 / 不存在的模型（或提示词）对访客不可见
-    if (!repo.isModelVisible(modelId) || !repo.isPromptVisible(promptId)) {
+    // 停用 / 不存在 / 已取消分配的"模型 × 提示词"对访客不可见
+    if (!repo.isCheckVisible(modelId, promptId)) {
       return c.json({ error: "不存在" }, 404);
     }
     const body: HistoryResponse = {
@@ -39,11 +39,7 @@ export function publicRoutes({ repo, runtime }: PublicRoutesDeps) {
   app.get("/results/:id", (c) => {
     const id = parseId(c.req.param("id"));
     const result = id === null ? undefined : repo.getResult(id, runtime);
-    if (
-      !result ||
-      !repo.isModelVisible(result.modelId) ||
-      !repo.isPromptVisible(result.promptId)
-    ) {
+    if (!result || !repo.isCheckVisible(result.modelId, result.promptId)) {
       return c.json({ error: "记录不存在" }, 404);
     }
     return c.json(result);

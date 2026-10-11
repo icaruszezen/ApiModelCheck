@@ -1,14 +1,16 @@
 /**
- * 后台各页共用的小件：出错信息、确认弹窗、页面外框。
+ * 后台各页共用的小件：出错信息、确认弹窗、页面外框、表格的操作列。
  */
 import { Button, Dialog, PageHeader } from "@endfield-ui/react";
 import { useState, type ReactNode } from "react";
 
-/** 把捕获到的错误变成一句可以直接给人看的话 */
-export function errorMessage(error: unknown): string {
-  if (error instanceof Error && error.message) return error.message;
-  return "操作失败，请稍后重试。";
-}
+export { errorMessage } from "./error-text";
+
+export {
+  STICKY_END_CELL,
+  STICKY_END_HEAD,
+  stickyEndHeadRef,
+} from "./sticky-end";
 
 export interface ConfirmDialogProps {
   open: boolean;

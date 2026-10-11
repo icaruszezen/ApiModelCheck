@@ -276,6 +276,50 @@ describe("GET /api/public/history", () => {
   });
 });
 
+describe("取消分配的提示词", () => {
+  it("历史和记录详情对访客都是 404", async () => {
+    const ch = channel();
+    const p = prompt("题");
+    const q = prompt("另一题");
+    const m = model(ch, { promptIds: [p, q] });
+    const kept = result(m, p);
+    const removed = result(m, q);
+    const app = makeApp();
+    expect(
+      (await get(app, `/api/public/history?modelId=${m}&promptId=${q}`)).status,
+    ).toBe(200);
+    expect((await get(app, `/api/public/results/${removed}`)).status).toBe(200);
+
+    repo.updateModel(m, {
+      channelId: ch,
+      model: "claude-test",
+      displayName: "",
+      stream: true,
+      timeoutSeconds: 60,
+      intervalMinutes: 60,
+      maxTokens: null,
+      temperature: null,
+      enabled: true,
+      sortOrder: 0,
+      promptIds: [p],
+    });
+    const history = await get(
+      app,
+      `/api/public/history?modelId=${m}&promptId=${q}`,
+    );
+    expect(history.status).toBe(404);
+    expect(await history.json()).toEqual({ error: "不存在" });
+    const detail = await get(app, `/api/public/results/${removed}`);
+    expect(detail.status).toBe(404);
+    expect(await detail.json()).toEqual({ error: "记录不存在" });
+    // 仍然分配着的照常可见
+    expect((await get(app, `/api/public/results/${kept}`)).status).toBe(200);
+    expect(
+      (await get(app, `/api/public/history?modelId=${m}&promptId=${p}`)).status,
+    ).toBe(200);
+  });
+});
+
 describe("GET /api/public/results/:id", () => {
   it("返回详情，检测中的用实时输出", async () => {
     const ch = channel();

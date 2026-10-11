@@ -9,6 +9,7 @@ import type {
 import { formatDateTime } from "../../lib/format";
 import {
   POLL_ACTIVE_MS,
+  POLL_DUE_GRACE_MS,
   POLL_IDLE_MS,
   POLL_MAX_BACKOFF_MS,
   POLL_RETRY_MS,
@@ -23,16 +24,21 @@ import {
   hasOutput,
   historyLabel,
   isBoardActive,
+  latestVersion,
   modelHeading,
   nextPollDelay,
   nextRunText,
+  pickAfterRecheck,
   pickTab,
+  prunePicks,
   relativeParts,
   resolveCheckDisplay,
   resultMeta,
   runningCheck,
+  shouldRecheckPick,
   toSummary,
   tocEntries,
+  type Picked,
 } from "./board-logic";
 
 const NOW = Date.parse("2026-10-11T12:00:00.000Z");
@@ -136,29 +142,87 @@ describe("isBoardActive", () => {
 describe("nextPollDelay", () => {
   const idle = board([model()]);
   const active = board([model({ running: true })]);
+  /** 一个有检测题、下次检测在 offset 毫秒之后的空闲模型 */
+  const dueIn = (offset: number | null) =>
+    model({
+      checks: [check(1, result())],
+      nextRunAt: offset === null ? null : iso(offset),
+    });
 
   it("平时 30 秒，有检测进行时 3 秒", () => {
-    expect(nextPollDelay(idle, 0)).toBe(POLL_IDLE_MS);
-    expect(nextPollDelay(active, 0)).toBe(POLL_ACTIVE_MS);
+    expect(nextPollDelay(idle, 0, NOW)).toBe(POLL_IDLE_MS);
+    expect(nextPollDelay(active, 0, NOW)).toBe(POLL_ACTIVE_MS);
   });
 
   it("还没有数据时用重试间隔", () => {
-    expect(nextPollDelay(undefined, 0)).toBe(POLL_RETRY_MS);
+    expect(nextPollDelay(undefined, 0, NOW)).toBe(POLL_RETRY_MS);
+  });
+
+  it("下次检测在 30 秒以内时，到点后 2 秒拉一次", () => {
+    expect(nextPollDelay(board([dueIn(10_000)]), 0, NOW)).toBe(12_000);
+    expect(nextPollDelay(board([dueIn(27_000)]), 0, NOW)).toBe(29_000);
+    // 夹在 3 秒和 30 秒之间
+    expect(nextPollDelay(board([dueIn(500)]), 0, NOW)).toBe(POLL_ACTIVE_MS);
+    expect(nextPollDelay(board([dueIn(29_000)]), 0, NOW)).toBe(POLL_IDLE_MS);
+  });
+
+  it("还远时照旧 30 秒；从没检测过、没有检测题的模型不算", () => {
+    expect(nextPollDelay(board([dueIn(5 * MIN)]), 0, NOW)).toBe(POLL_IDLE_MS);
+    expect(nextPollDelay(board([dueIn(null)]), 0, NOW)).toBe(POLL_IDLE_MS);
+    expect(
+      nextPollDelay(board([model({ nextRunAt: iso(5_000) })]), 0, NOW),
+    ).toBe(POLL_IDLE_MS);
+  });
+
+  it("多个模型取最早到点的那个", () => {
+    const b = board([dueIn(5 * MIN), dueIn(20_000)], [dueIn(8_000)]);
+    expect(nextPollDelay(b, 0, NOW)).toBe(10_000);
+  });
+
+  it("到点了还没开始时按检测中的间隔拉，但到点超过 2 分钟就不再快拉", () => {
+    expect(nextPollDelay(board([dueIn(0)]), 0, NOW)).toBe(POLL_ACTIVE_MS);
+    expect(nextPollDelay(board([dueIn(-30_000)]), 0, NOW)).toBe(
+      POLL_ACTIVE_MS,
+    );
+    expect(nextPollDelay(board([dueIn(-POLL_DUE_GRACE_MS)]), 0, NOW)).toBe(
+      POLL_ACTIVE_MS,
+    );
+    expect(nextPollDelay(board([dueIn(-POLL_DUE_GRACE_MS - 1)]), 0, NOW)).toBe(
+      POLL_IDLE_MS,
+    );
+    // 卡住的那个不影响别的模型快到点
+    const b = board([dueIn(-10 * MIN), dueIn(15_000)]);
+    expect(nextPollDelay(b, 0, NOW)).toBe(17_000);
+  });
+
+  it("用传进来的（按服务器时钟校正过的）时间算", () => {
+    const b = board([dueIn(5 * MIN)]);
+    expect(nextPollDelay(b, 0, NOW)).toBe(POLL_IDLE_MS);
+    expect(nextPollDelay(b, 0, NOW + 5 * MIN - 10_000)).toBe(12_000);
   });
 
   it("连续失败时翻倍退避，封顶 60 秒", () => {
-    expect(nextPollDelay(active, 1)).toBe(POLL_ACTIVE_MS * 2);
-    expect(nextPollDelay(active, 2)).toBe(POLL_ACTIVE_MS * 4);
-    expect(nextPollDelay(active, 10)).toBe(POLL_MAX_BACKOFF_MS);
-    expect(nextPollDelay(undefined, 1)).toBe(POLL_RETRY_MS * 2);
-    expect(nextPollDelay(idle, 1)).toBe(POLL_MAX_BACKOFF_MS);
-    expect(nextPollDelay(idle, 50)).toBe(POLL_MAX_BACKOFF_MS);
+    expect(nextPollDelay(active, 1, NOW)).toBe(POLL_ACTIVE_MS * 2);
+    expect(nextPollDelay(active, 2, NOW)).toBe(POLL_ACTIVE_MS * 4);
+    expect(nextPollDelay(active, 10, NOW)).toBe(POLL_MAX_BACKOFF_MS);
+    expect(nextPollDelay(undefined, 1, NOW)).toBe(POLL_RETRY_MS * 2);
+    expect(nextPollDelay(idle, 1, NOW)).toBe(POLL_MAX_BACKOFF_MS);
+    expect(nextPollDelay(idle, 50, NOW)).toBe(POLL_MAX_BACKOFF_MS);
+    // 快到点时的间隔同样按失败次数退避
+    expect(nextPollDelay(board([dueIn(10_000)]), 1, NOW)).toBe(24_000);
+    expect(nextPollDelay(board([dueIn(-5_000)]), 3, NOW)).toBe(
+      POLL_ACTIVE_MS * 8,
+    );
   });
 
   it("退避不会比正常间隔还短", () => {
+    const soon = board([dueIn(10_000)]);
     for (let failures = 0; failures < 8; failures++) {
-      expect(nextPollDelay(idle, failures)).toBeGreaterThanOrEqual(
+      expect(nextPollDelay(idle, failures, NOW)).toBeGreaterThanOrEqual(
         POLL_IDLE_MS,
+      );
+      expect(nextPollDelay(soon, failures, NOW)).toBeGreaterThanOrEqual(
+        12_000,
       );
     }
   });
@@ -527,6 +591,124 @@ describe("history", () => {
       durationMs: r.durationMs,
       trigger: "manual",
     });
+  });
+});
+
+describe("latestVersion", () => {
+  it("id + 状态；从没检测过是 null", () => {
+    expect(latestVersion({ id: 70, status: "running" })).toBe("70:running");
+    expect(latestVersion({ id: 70, status: "success" })).toBe("70:success");
+    expect(latestVersion(null)).toBeNull();
+    expect(latestVersion(undefined)).toBeNull();
+  });
+});
+
+describe("shouldRecheckPick", () => {
+  const ready = (seenLatest: string | null): Picked => ({
+    id: 68,
+    seenLatest,
+    state: "ready",
+    result: result({ id: 68 }),
+  });
+
+  it("最近一次没变时不问：刷新本身不带出请求", () => {
+    expect(shouldRecheckPick(ready("69:success"), "69:success")).toBe(false);
+  });
+
+  it("出了新结果、或者检测刚结束时要问", () => {
+    expect(shouldRecheckPick(ready("69:success"), "70:running")).toBe(true);
+    // 保留条数满了的时候，旧记录在检测结束的那一刻被删
+    expect(shouldRecheckPick(ready("70:running"), "70:success")).toBe(true);
+    expect(
+      shouldRecheckPick(
+        { id: 68, seenLatest: "69:success", state: "error", message: "x" },
+        "70:success",
+      ),
+    ).toBe(true);
+  });
+
+  it("没选、正在载入、没有最近一次时不问", () => {
+    expect(shouldRecheckPick(null, "70:success")).toBe(false);
+    expect(
+      shouldRecheckPick(
+        { id: 68, seenLatest: "69:success", state: "loading" },
+        "70:success",
+      ),
+    ).toBe(false);
+    // 记录清空了：交给 prunePicks
+    expect(shouldRecheckPick(ready("69:success"), null)).toBe(false);
+  });
+});
+
+describe("pickAfterRecheck", () => {
+  const old = result({ id: 68 });
+  const ready: Picked = {
+    id: 68,
+    seenLatest: "69:success",
+    state: "ready",
+    result: old,
+  };
+
+  it("被删了（清空后紧接着又检测了一次）：作废，回到最新", () => {
+    expect(pickAfterRecheck(ready, "70:running", { kind: "gone" })).toBeNull();
+  });
+
+  it("还在：记下这次的版本，不再重复问；结果对象不换", () => {
+    const fresh = result({ id: 68 });
+    const next = pickAfterRecheck(ready, "70:running", {
+      kind: "found",
+      result: fresh,
+    });
+    expect(next).toEqual({ ...ready, seenLatest: "70:running" });
+    expect(next?.state === "ready" && next.result).toBe(old);
+    expect(next && shouldRecheckPick(next, "70:running")).toBe(false);
+  });
+
+  it("之前载入失败的，确认时拿到了就直接显示", () => {
+    const fresh = result({ id: 68 });
+    expect(
+      pickAfterRecheck(
+        { id: 68, seenLatest: "69:success", state: "error", message: "x" },
+        "70:success",
+        { kind: "found", result: fresh },
+      ),
+    ).toEqual({
+      id: 68,
+      seenLatest: "70:success",
+      state: "ready",
+      result: fresh,
+    });
+  });
+
+  it("没问成时原样返回同一个对象，不反复重试", () => {
+    expect(pickAfterRecheck(ready, "70:running", { kind: "failed" })).toBe(
+      ready,
+    );
+  });
+});
+
+describe("prunePicks", () => {
+  it("检测题都在、都有记录时原样返回同一个对象", () => {
+    const picks = { 4: "a", 7: "b" };
+    expect(prunePicks(picks, [check(4, result()), check(7, result())])).toBe(
+      picks,
+    );
+    const empty = {};
+    expect(prunePicks(empty, [])).toBe(empty);
+  });
+
+  it("去掉记录被清空的那条：新结果来了也不再冒出来", () => {
+    const picks = { 4: "a", 7: "b" };
+    expect(prunePicks(picks, [check(4, null), check(7, result())])).toEqual({
+      7: "b",
+    });
+  });
+
+  it("去掉已经不在这个模型上的检测题", () => {
+    const picks = { 4: "a", 7: "b" };
+    const next = prunePicks(picks, [check(7, result())]);
+    expect(next).toEqual({ 7: "b" });
+    expect(picks).toEqual({ 4: "a", 7: "b" });
   });
 });
 

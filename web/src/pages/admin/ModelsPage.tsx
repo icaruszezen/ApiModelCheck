@@ -5,6 +5,10 @@ import {
   Alert,
   Button,
   createIcon,
+  DropdownMenu,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
   EmptyState,
   Field,
   IconButton,
@@ -48,7 +52,7 @@ import {
 import { useAsync } from "../../lib/use-async";
 import { ModelEditor } from "./model-editor";
 import { modelToInput } from "./model-form";
-import { useNow, usePolling } from "./model-hooks";
+import { useMediaQuery, useNow, usePolling } from "./model-hooks";
 import {
   NEXT_RUN_TEXT,
   anyRunning,
@@ -56,16 +60,29 @@ import {
   filterModels,
   modelLabel,
   promptStats,
+  runnablePrompts,
+  runToast,
   type PromptStats,
 } from "./model-list";
-import { AdminPage, ConfirmDialog, errorMessage } from "./ui";
+import {
+  AdminPage,
+  ConfirmDialog,
+  errorMessage,
+  STICKY_END_CELL,
+  STICKY_END_HEAD,
+  stickyEndHeadRef,
+} from "./ui";
 
 const SearchIcon = createIcon("Search", <path d="M4 4h11v11H4zM15 15l5 5" />);
+const MoreIcon = createIcon(
+  "More",
+  <path d="M5 11h2v2H5zM11 11h2v2h-2zM17 11h2v2h-2z" />,
+);
 
 /** 有检测在进行时 5 秒刷新一次，平时 30 秒（"下次检测"到点后能看到它开始） */
 const FAST_POLL = 5_000;
 const IDLE_POLL = 30_000;
-const COLUMN_COUNT = 10;
+const COLUMN_COUNT = 8;
 
 type EditorState = { session: number; model: AdminModel | null };
 
@@ -89,6 +106,8 @@ export function ModelsPage() {
   const list = models.data ?? [];
   const running = anyRunning(list);
   const now = useNow(15_000);
+  // 手机上操作列已经钉在右边，名称列再冻结就只剩一条缝看中间的列
+  const wide = useMediaQuery("(min-width: 40rem)");
   usePolling(
     models.reload,
     models.data ? (running ? FAST_POLL : IDLE_POLL) : null,
@@ -149,15 +168,15 @@ export function ModelsPage() {
     void prompts.reload();
   };
 
-  const runNow = async (model: AdminModel) => {
+  /** 不传 promptId 检测全部提示词，传了只检测这一条 */
+  const runNow = async (model: AdminModel, promptId?: number) => {
     markSet(setStarting, model.id, true);
     try {
-      const { queued } = await adminApi.runModel(model.id);
-      toast(
-        queued
-          ? { message: "已开始检测", tone: "success" }
-          : { message: "这个模型正在检测中", tone: "info" },
+      const { queued } = await adminApi.runModel(
+        model.id,
+        promptId === undefined ? {} : { promptId },
       );
+      toast(runToast(queued));
       // 先标成检测中，轮询立刻切到快档
       patchModel(model.id, { running: true });
       void models.reload();
@@ -289,19 +308,23 @@ export function ModelsPage() {
           )}
         </p>
 
-        <Table label="检测模型" stickyFirstColumn>
+        <Table label="检测模型" stickyFirstColumn={wide}>
           <TableHead>
             <TableRow>
               <TableHeaderCell>模型</TableHeaderCell>
               <TableHeaderCell>渠道</TableHeaderCell>
-              <TableHeaderCell>请求方式</TableHeaderCell>
-              <TableHeaderCell>检测间隔</TableHeaderCell>
-              <TableHeaderCell numeric>超时</TableHeaderCell>
+              <TableHeaderCell>检测设置</TableHeaderCell>
               <TableHeaderCell>检测题</TableHeaderCell>
               <TableHeaderCell>最近检测</TableHeaderCell>
               <TableHeaderCell>下次检测</TableHeaderCell>
               <TableHeaderCell>启用</TableHeaderCell>
-              <TableHeaderCell align="end">操作</TableHeaderCell>
+              <TableHeaderCell
+                align="end"
+                className={STICKY_END_HEAD}
+                ref={stickyEndHeadRef}
+              >
+                操作
+              </TableHeaderCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -343,7 +366,7 @@ export function ModelsPage() {
                   channels.data !== undefined && prompts.data !== undefined
                 }
                 onToggle={(enabled) => void toggleEnabled(model, enabled)}
-                onRun={() => void runNow(model)}
+                onRun={(promptId) => void runNow(model, promptId)}
                 onEdit={() => openEditor(model)}
                 onResults={() => navigate(`/admin/results?modelId=${model.id}`)}
                 onDelete={() => {
@@ -454,7 +477,8 @@ interface ModelRowProps {
   /** 渠道和提示词都载入了才能打开表单 */
   editable: boolean;
   onToggle: (enabled: boolean) => void;
-  onRun: () => void;
+  /** 不传 promptId 检测全部提示词 */
+  onRun: (promptId?: number) => void;
   onEdit: () => void;
   onResults: () => void;
   onDelete: () => void;
@@ -476,6 +500,7 @@ function ModelRow({
 }: ModelRowProps) {
   const label = modelLabel(model);
   const stats = promptStats(model, prompts);
+  const runnable = runnablePrompts(model, prompts);
   // 渠道列表还没载入时先当作启用，免得闪一下"渠道已停用"
   const channelEnabled = channel?.enabled ?? true;
   const next = describeNextRun(
@@ -487,8 +512,15 @@ function ModelRow({
   return (
     <TableRow>
       <TableCell rowHeader className="whitespace-normal">
-        <div className="flex max-w-64 min-w-36 flex-col gap-0.5">
-          <span className="wrap-anywhere">{label}</span>
+        <div className="flex max-w-64 min-w-36 flex-col items-start gap-0.5">
+          <button
+            type="button"
+            onClick={onEdit}
+            disabled={!editable}
+            className="text-left font-medium wrap-anywhere underline decoration-line-strong underline-offset-4 hover:decoration-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus disabled:no-underline"
+          >
+            {label}
+          </button>
           {label !== model.model && (
             <span className="font-mono text-xs font-normal text-ink-tertiary wrap-anywhere">
               {model.model}
@@ -498,7 +530,7 @@ function ModelRow({
       </TableCell>
       <TableCell>
         <span className="inline-flex items-center gap-2">
-          <span className="max-w-40 truncate" title={model.channelName}>
+          <span className="max-w-32 truncate" title={model.channelName}>
             {model.channelName}
           </span>
           {!channelEnabled && (
@@ -509,12 +541,14 @@ function ModelRow({
         </span>
       </TableCell>
       <TableCell>
-        <Tag size="sm" variant={model.stream ? "solid" : "outline"}>
-          {model.stream ? "流式" : "非流式"}
-        </Tag>
+        {/* 间隔、请求方式、超时并在一格里：表格在笔记本宽度上不用横向滚动 */}
+        <div className="flex flex-col">
+          <span>每 {formatInterval(model.intervalMinutes)}</span>
+          <span className="text-xs text-ink-secondary">
+            {model.stream ? "流式" : "非流式"} · 超时 {model.timeoutSeconds} 秒
+          </span>
+        </div>
       </TableCell>
-      <TableCell>{formatInterval(model.intervalMinutes)}</TableCell>
-      <TableCell numeric>{model.timeoutSeconds} 秒</TableCell>
       <TableCell>
         <PromptCount stats={stats} />
       </TableCell>
@@ -522,7 +556,7 @@ function ModelRow({
         {model.running ? (
           <StatusTag status="running" />
         ) : model.lastStatus ? (
-          <span className="inline-flex items-center gap-2">
+          <span className="flex flex-col items-start gap-0.5">
             <StatusTag status={model.lastStatus} />
             {model.lastRunAt && (
               <time
@@ -568,29 +602,20 @@ function ModelRow({
           className="min-h-0 py-0"
         />
       </TableCell>
-      <TableCell align="end">
+      <TableCell align="end" className={STICKY_END_CELL}>
         <div className="inline-flex items-center gap-1">
           <Tooltip content="立即检测">
             <IconButton
               size="sm"
               aria-label={`立即检测 ${label}`}
               disabled={starting}
-              onClick={onRun}
+              onClick={() => onRun()}
             >
               {starting ? (
                 <Spinner size="sm" label={null} />
               ) : (
                 <PlayIcon size={16} />
               )}
-            </IconButton>
-          </Tooltip>
-          <Tooltip content="查看记录">
-            <IconButton
-              size="sm"
-              aria-label={`查看 ${label} 的检测记录`}
-              onClick={onResults}
-            >
-              <ResultsIcon size={16} />
             </IconButton>
           </Tooltip>
           <Tooltip content="编辑">
@@ -603,15 +628,40 @@ function ModelRow({
               <EditIcon size={16} />
             </IconButton>
           </Tooltip>
-          <Tooltip content="删除">
-            <IconButton
-              size="sm"
-              aria-label={`删除 ${label}`}
+          <DropdownMenu
+            align="end"
+            trigger={
+              <IconButton size="sm" aria-label={`${label} 的更多操作`}>
+                <MoreIcon size={16} />
+              </IconButton>
+            }
+          >
+            <DropdownMenuItem iconStart={<ResultsIcon />} onClick={onResults}>
+              查看记录
+            </DropdownMenuItem>
+            <DropdownMenuSub
+              label="只检测一条提示词"
+              iconStart={<PlayIcon />}
+              disabled={starting || runnable.length === 0}
+            >
+              {runnable.map((prompt) => (
+                <DropdownMenuItem
+                  key={prompt.id}
+                  onClick={() => onRun(prompt.id)}
+                >
+                  {prompt.title}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuSub>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem
+              tone="danger"
+              iconStart={<TrashIcon />}
               onClick={onDelete}
             >
-              <TrashIcon size={16} />
-            </IconButton>
-          </Tooltip>
+              删除
+            </DropdownMenuItem>
+          </DropdownMenu>
         </div>
       </TableCell>
     </TableRow>

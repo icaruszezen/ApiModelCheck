@@ -30,7 +30,14 @@ import {
   modelOptionLabel,
   promptToggleInput,
 } from "./prompt-form";
-import { AdminPage, ConfirmDialog, errorMessage } from "./ui";
+import {
+  AdminPage,
+  ConfirmDialog,
+  errorMessage,
+  STICKY_END_CELL,
+  STICKY_END_HEAD,
+  stickyEndHeadRef,
+} from "./ui";
 
 interface EditorState {
   open: boolean;
@@ -211,7 +218,13 @@ export function PromptsPage() {
             <TableHeaderCell numeric>应用的模型数</TableHeaderCell>
             <TableHeaderCell numeric>排序</TableHeaderCell>
             <TableHeaderCell>启用</TableHeaderCell>
-            <TableHeaderCell align="end">操作</TableHeaderCell>
+            <TableHeaderCell
+              align="end"
+              className={STICKY_END_HEAD}
+              ref={stickyEndHeadRef}
+            >
+              操作
+            </TableHeaderCell>
           </TableRow>
         </TableHead>
         <TableBody>
@@ -222,7 +235,8 @@ export function PromptsPage() {
                   type="button"
                   onClick={() => openEditor(prompt)}
                   title={prompt.title}
-                  className="block max-w-48 truncate text-left font-medium underline decoration-line-strong underline-offset-4 hover:decoration-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+                  // 上下留一点内边距：truncate 会裁掉盒子外的东西，下划线贴着盒子底边时会时有时无
+                  className="block max-w-48 truncate py-0.5 text-left font-medium underline decoration-line-strong underline-offset-4 hover:decoration-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
                 >
                   {prompt.title}
                 </button>
@@ -253,7 +267,7 @@ export function PromptsPage() {
                   onCheckedChange={(checked) => void toggle(prompt, checked)}
                 />
               </TableCell>
-              <TableCell align="end">
+              <TableCell align="end" className={STICKY_END_CELL}>
                 <span className="inline-flex gap-1">
                   <Tooltip content="编辑">
                     <IconButton

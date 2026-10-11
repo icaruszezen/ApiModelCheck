@@ -141,7 +141,10 @@ function results() {
 }
 
 describe("scrubSecrets", () => {
-  it("替换密钥、主机名和请求头的值，大小写不敏感", () => {
+  const scrub = (text: string, baseUrl: string) =>
+    scrubSecrets(text, { apiKey: "", baseUrl, extraHeaders: {} });
+
+  it("替换密钥、请求头的值和整个基础地址，大小写不敏感", () => {
     const text = scrubSecrets(
       `bad key ${API_KEY} at https://RELAY.private-host.example:8443/v1/chat with token-value-xyz`,
       {
@@ -150,7 +153,85 @@ describe("scrubSecrets", () => {
         extraHeaders: { "X-Token": "token-value-xyz" },
       },
     );
-    expect(text).toBe("bad key *** at https://***:8443/v1/chat with ***");
+    expect(text).toBe("bad key *** at ***/chat with ***");
+  });
+
+  it("带点的主机名单独出现时也替换，但不碰更长的名字", () => {
+    expect(
+      scrub(
+        "ENOTFOUND relay.private-host.example; cert for *.RELAY.private-host.example; https://relay.private-host.example:9999/x; relay.private-host.example-mirror.net",
+        BASE_URL,
+      ),
+    ).toBe(
+      "ENOTFOUND ***; cert for *.***; https://***:9999/x; relay.private-host.example-mirror.net",
+    );
+  });
+
+  it("不带点的主机名只在地址里替换，不改坏 API key / api_error", () => {
+    expect(
+      scrub(
+        "Invalid API key provided (type: api_error) at http://api:3000/v1/chat/completions; via //api/x or api:3000",
+        "http://api:3000/v1",
+      ),
+    ).toBe(
+      "Invalid API key provided (type: api_error) at ***/chat/completions; via //***/x or ***:3000",
+    );
+  });
+
+  it("路径里的令牌替换掉，常见的路径段保留", () => {
+    expect(
+      scrub(
+        "HTTP 404：mock upstream: no route for POST /u/acct-7f3a9c2e1b/v1/chat/completions",
+        "http://127.0.0.1:4010/u/acct-7f3a9c2e1b/v1",
+      ),
+    ).toBe(
+      "HTTP 404：mock upstream: no route for POST /u/***/v1/chat/completions",
+    );
+    const generic = "POST /api/paas/v4/chat/completions failed";
+    expect(scrub(generic, "https://open.bigmodel.cn/api/paas/v4")).toBe(
+      generic,
+    );
+  });
+
+  it("Cloudflare AI Gateway 地址里的账号 ID 和网关名", () => {
+    const account = "0123456789abcdef0123456789abcdef";
+    expect(
+      scrub(
+        `HTTP 401：{"error":"account ${account} has no gateway my-gw"} POST /v1/${account}/my-gw/openai/chat/completions`,
+        `https://gateway.ai.cloudflare.com/v1/${account}/my-gw/openai`,
+      ),
+    ).toBe(
+      'HTTP 401：{"error":"account *** has no gateway ***"} POST /v1/***/***/openai/chat/completions',
+    );
+  });
+
+  it("地址里的用户名和密码（原样的和解码后的）", () => {
+    expect(
+      scrub(
+        "credentials: http://proxyuser:Pr0xy%40Pass@127.0.0.1:4010/v1/chat/completions (user proxyuser, pass Pr0xy@Pass)",
+        "http://proxyuser:Pr0xy%40Pass@127.0.0.1:4010/v1",
+      ),
+    ).toBe("credentials: ***/chat/completions (user ***, pass ***)");
+    // 短的用户名只替换完整的词
+    expect(
+      scrub(
+        "auth failed for bob, not bobcat",
+        "http://bob:hunter22@relay.example.com/v1",
+      ),
+    ).toBe("auth failed for ***, not bobcat");
+  });
+
+  it("查询串和较长的参数值（如 ?key=）", () => {
+    const baseUrl =
+      "https://relay.example.com/v1?key=AIzaSyD-secret-key-123&region=us";
+    expect(
+      scrub(
+        "HTTP 400：bad request /v1/chat/completions?key=AIzaSyD-secret-key-123&region=us; API key AIzaSyD-secret-key-123 invalid in us",
+        baseUrl,
+      ),
+    ).toBe(
+      "HTTP 400：bad request /v1/chat/completions***; API key *** invalid in us",
+    );
   });
 
   it("短密钥和空的基础地址不替换", () => {
@@ -631,6 +712,34 @@ describe("中止", () => {
     expect(s.trigger(queued)).toEqual({ queued: false });
   });
 
+  it("stop() 打断的模型清空上次检测时间，下次启动后第一次检查就重测", async () => {
+    const ch = channel();
+    const p = prompt("题");
+    const q = prompt("题2", 1);
+    const a = model(ch, { promptIds: [p, q], model: "a" });
+    const b = model(ch, { promptIds: [p], model: "b" });
+    const first = controllable();
+    const s = make(first.complete);
+    s.tick();
+    expect(first.calls.map((c) => c.request.model)).toEqual(["a", "b"]);
+    first.calls[1]!.done.resolve(ok());
+    await vi.waitFor(() => expect(s.isBusy(b)).toBe(false));
+    await s.stop();
+    // a 这一轮没跑完，b 已经跑完了
+    expect(repo.getModel(a)?.lastRunAt).toBeNull();
+    expect(repo.getModel(b)?.lastRunAt).toBe(T0.toISOString());
+
+    advance(60_000);
+    const complete = vi.fn<CompleteFn>(async () => ok());
+    const restarted = make(complete);
+    restarted.tick();
+    await restarted.idle();
+    expect(complete.mock.calls.map(([r]) => [r.model, r.prompt])).toEqual([
+      ["a", "题?"],
+      ["a", "题2?"],
+    ]);
+  });
+
   it("删除模型时中止它正在进行的检测，这一轮不再继续", async () => {
     const ch = channel();
     const p = prompt("题");
@@ -722,5 +831,32 @@ describe("启动恢复", () => {
       error: RESTART_MESSAGE,
     });
     expect(repo.getResult(id)?.finishedAt).not.toBeNull();
+  });
+
+  it("被打断的模型启动后第一次检查就重测，其它模型照常按间隔", async () => {
+    const ch = channel();
+    const p = prompt("题");
+    const interrupted = model(ch, { promptIds: [p], model: "a" });
+    const finished = model(ch, { promptIds: [p], model: "b" });
+    repo.setLastRunAt(interrupted, T0.toISOString());
+    repo.setLastRunAt(finished, T0.toISOString());
+    repo.insertRunningResult({
+      modelId: interrupted,
+      promptId: p,
+      promptSnapshot: "x",
+      stream: true,
+      startedAt: T0.toISOString(),
+      trigger: "schedule",
+    });
+    expect(repo.recoverStaleRunning(RESTART_MESSAGE)).toBe(1);
+    expect(repo.getModel(interrupted)?.lastRunAt).toBeNull();
+    expect(repo.getModel(finished)?.lastRunAt).toBe(T0.toISOString());
+
+    advance(60_000);
+    const complete = vi.fn<CompleteFn>(async () => ok());
+    const s = make(complete);
+    s.tick();
+    await s.idle();
+    expect(complete.mock.calls.map(([r]) => r.model)).toEqual(["a"]);
   });
 });

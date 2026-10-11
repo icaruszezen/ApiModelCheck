@@ -23,11 +23,12 @@ export function formatShortDateTime(iso: string | null | undefined): string {
 /** 1234 → "1.2 秒"，65000 → "1 分 5 秒" */
 export function formatDuration(ms: number | null | undefined): string {
   if (ms === null || ms === undefined || !Number.isFinite(ms)) return "—";
-  if (ms < 1000) return `${Math.round(ms)} 毫秒`;
-  const seconds = ms / 1000;
-  if (seconds < 60) return `${seconds.toFixed(1)} 秒`;
-  const minutes = Math.floor(seconds / 60);
-  const rest = Math.round(seconds - minutes * 60);
+  // 分档的界线按舍入之后算：59.96 秒不写成"60.0 秒"，119.6 秒不写成"1 分 60 秒"
+  if (ms < 999.5) return `${Math.round(ms)} 毫秒`;
+  if (ms < 59_950) return `${(ms / 1000).toFixed(1)} 秒`;
+  const total = Math.round(ms / 1000);
+  const minutes = Math.floor(total / 60);
+  const rest = total % 60;
   return rest === 0 ? `${minutes} 分` : `${minutes} 分 ${rest} 秒`;
 }
 

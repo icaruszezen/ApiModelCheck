@@ -124,6 +124,15 @@ describe("基础地址", () => {
     );
   });
 
+  it("地址里带用户名密码时说清楚原因", () => {
+    const message = baseUrlError("https://user:pass@relay.example.com/v1");
+    expect(message).toContain("用户名和密码");
+    expect(message).not.toContain("pass@");
+    expect(baseUrlError("https://user@relay.example.com")).toContain(
+      "用户名和密码",
+    );
+  });
+
   it("预览实际请求地址；Gemini 的模型位显示成 {模型}", () => {
     expect(previewRequestUrl("openai-chat", "")).toBe(
       "https://api.openai.com/v1/chat/completions",

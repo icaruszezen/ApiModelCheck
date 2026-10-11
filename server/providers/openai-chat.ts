@@ -1,6 +1,7 @@
 /**
  * OpenAI Chat Completions（以及绝大多数"OpenAI 兼容"的中转和推理服务）。
  */
+import { ENDPOINT_META } from "../../shared/endpoints.ts";
 import { ProviderError } from "./types.ts";
 import type { CompletionRequest, CompletionResult } from "./types.ts";
 import {
@@ -99,6 +100,27 @@ function hasError(json: JsonObject): boolean {
   );
 }
 
+/** OpenAI 的 o 系列、GPT-5 系列（可带 "openai/" 这类厂商前缀） */
+const REASONING_MODEL = /^(o\d|gpt-5)/i;
+
+/**
+ * 最大输出 tokens 用哪个字段：OpenAI 的推理模型只认 max_completion_tokens，传 max_tokens 会 400；
+ * OpenAI 官方地址上所有模型都认 max_completion_tokens。其余兼容服务大多只认 max_tokens。
+ */
+function maxTokensField(request: CompletionRequest): string {
+  const model = request.model.trim().replace(/^[^/]*\//, "");
+  if (REASONING_MODEL.test(model)) return "max_completion_tokens";
+  let host = "";
+  try {
+    host = new URL(
+      request.baseUrl.trim() || ENDPOINT_META["openai-chat"].defaultBaseUrl,
+    ).hostname;
+  } catch {
+    // 地址无效时发请求前就会报错，这里随便用哪个都行
+  }
+  return host === "api.openai.com" ? "max_completion_tokens" : "max_tokens";
+}
+
 function buildBody(request: CompletionRequest): JsonObject {
   const body: JsonObject = {
     model: request.model.trim(),
@@ -106,7 +128,9 @@ function buildBody(request: CompletionRequest): JsonObject {
     stream: request.stream,
   };
   if (request.stream) body.stream_options = { include_usage: true };
-  if (request.maxTokens !== null) body.max_tokens = request.maxTokens;
+  if (request.maxTokens !== null) {
+    body[maxTokensField(request)] = request.maxTokens;
+  }
   if (request.temperature !== null) body.temperature = request.temperature;
   return body;
 }

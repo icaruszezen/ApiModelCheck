@@ -6,6 +6,7 @@ import {
   pageCountOf,
   parseResultsQuery,
   resultsQueryToParams,
+  shouldScrollToTableTop,
   tokensText,
   withFilter,
 } from "./result-query";
@@ -123,5 +124,19 @@ describe("isLongText", () => {
     expect(isLongText("1\n2\n3\n4\n5\n6\n7")).toBe(true);
     expect(isLongText("字".repeat(401))).toBe(true);
     expect(isLongText("字".repeat(400))).toBe(false);
+  });
+});
+
+describe("shouldScrollToTableTop", () => {
+  it("窄于 1280px：被吸顶的顶栏挡住（上缘在 scroll-margin 72px 以内）就滚回来", () => {
+    expect(shouldScrollToTableTop(22, 72)).toBe(true);
+    expect(shouldScrollToTableTop(-300, 72)).toBe(true);
+    expect(shouldScrollToTableTop(72, 72)).toBe(false);
+    expect(shouldScrollToTableTop(400, 72)).toBe(false);
+  });
+
+  it("宽屏没有顶栏：滚出视野才滚回来", () => {
+    expect(shouldScrollToTableTop(-1, 16)).toBe(true);
+    expect(shouldScrollToTableTop(22, 16)).toBe(false);
   });
 });

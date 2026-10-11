@@ -45,7 +45,8 @@ export interface AdminRoutesDeps {
   auth: Auth;
   limiter: LoginLimiter;
   username: string;
-  trustProxy: boolean;
+  /** 信任的反向代理层数，0 表示不信任 */
+  trustProxy: number;
   listModels: ListModelsFn;
 }
 
@@ -92,11 +93,15 @@ export function adminRoutes(deps: AdminRoutesDeps) {
 
   app.post("/login", async (c) => {
     const ip = clientIp(c, trustProxy);
-    if (limiter.isBlocked(ip)) {
-      return c.json({ error: "登录尝试过多，请 15 分钟后再试" }, 429);
-    }
+    const blocked = () =>
+      c.json({ error: "登录尝试过多，请 15 分钟后再试" }, 429);
+    // 先查一次：已封禁的 IP 不用等请求体传完
+    if (limiter.isBlocked(ip)) return blocked();
     const parsed = await parseBody(c, loginSchema);
     if (!parsed.ok) return c.json({ error: parsed.error }, 400);
+    // 等请求体期间别的请求可能已把这个 IP 封禁（同时发来一大批请求），比对密码前再查一次；
+    // 从这里到记下失败之间没有 await，每个窗口最多比对 LOGIN_MAX_FAILURES 次
+    if (limiter.isBlocked(ip)) return blocked();
     if (!auth.checkCredentials(parsed.data.username, parsed.data.password)) {
       limiter.recordFailure(ip);
       return c.json({ error: "用户名或密码错误" }, 401);

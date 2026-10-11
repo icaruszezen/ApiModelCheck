@@ -11,6 +11,7 @@ import {
   buildHeaders,
   describeNetworkError,
   isRecord,
+  networkError,
   notJsonError,
   parseJsonText,
   readBodyText,
@@ -62,6 +63,23 @@ function isEventStream(response: Response): boolean {
   );
 }
 
+function isJson(response: Response): boolean {
+  return /\bapplication\/json\b/i.test(
+    response.headers.get("content-type") ?? "",
+  );
+}
+
+/** SSE 的一行只可能以这些开头（retry 很少见，不算） */
+const SSE_LINE_START = ["data:", "event:", "id:", ":"];
+
+/** 响应体开头是不是 SSE：true / false，还不够判断（只有空白、或是 "dat" 这样的半截）时 null */
+function sseVerdict(head: string): boolean | null {
+  const text = head.replace(/^[\uFEFF\s]+/, "");
+  if (SSE_LINE_START.some((start) => text.startsWith(start))) return true;
+  if (SSE_LINE_START.some((start) => start.startsWith(text))) return null;
+  return false;
+}
+
 /**
  * 有的中转把 SSE 标成 text/plain 之类的类型：解析 JSON 失败时看一眼是不是 SSE。
  * 要求至少有一行 data 是 JSON 对象或 [DONE]，免得把碰巧有 "data:" 行的网页当成空输出。
@@ -95,6 +113,7 @@ async function readStream(
 ): Promise<CompletionResult> {
   const out = new OutputBuilder(onDelta);
   const handler = adapter.createStreamHandler(out);
+  let ended = false;
   if (body) {
     const events = readSseStream(body);
     try {
@@ -112,7 +131,10 @@ async function readStream(
         }
         // 流在没有明确结束事件的情况下断开：返回已经收到的内容
         if (next.done) break;
-        if (dispatchEvent(handler, next.value)) break;
+        if (dispatchEvent(handler, next.value)) {
+          ended = true;
+          break;
+        }
       }
     } finally {
       // 提前结束（收到结束事件、上游报错、回调抛错）时取消响应体，释放连接
@@ -120,16 +142,89 @@ async function readStream(
     }
   }
   handler.finish?.();
-  return out.result();
+  const result = out.result();
+  // 什么都没收到就正常关闭：多半是中转在发出响应头之后上游出了错，不能记成成功
+  if (
+    !ended &&
+    result.output === "" &&
+    result.reasoning === "" &&
+    result.finishReason === null
+  ) {
+    throw new ProviderError("上游的流没有返回任何内容就结束了");
+  }
+  return result;
 }
 
-async function readNonStream(
+/** 先吐出已经读到的几段，再接着读剩下的；消费方提前结束时取消响应体 */
+async function* chainChunks(
+  head: Uint8Array[],
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+): AsyncGenerator<Uint8Array, void, undefined> {
+  try {
+    yield* head;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return;
+      yield value;
+    }
+  } finally {
+    reader.cancel().catch(() => {});
+  }
+}
+
+/**
+ * 请求的是流式，响应却既不是 text/event-stream 也不是 JSON（有的中转把 SSE 标成 text/plain 或不标）：
+ * 先读开头看一眼，是 SSE 就边收边解析，增量照常实时报出，超时也留得住已经收到的部分；
+ * 不是的话读完整个响应体，按非流式处理。
+ */
+async function readUnlabeled(
   response: Response,
   adapter: ProviderAdapter,
   onDelta: ((delta: CompletionDelta) => void) | undefined,
   signal: AbortSignal,
 ): Promise<CompletionResult> {
-  const text = await readBodyText(response, signal);
+  if (!response.body) return readNonStream("", adapter, onDelta, signal);
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  const decoder = new TextDecoder();
+  let head = "";
+  let verdict: boolean | null = null;
+  let done = false;
+  try {
+    while (verdict === null) {
+      const next = await reader.read();
+      if (next.done) {
+        done = true;
+        break;
+      }
+      chunks.push(next.value);
+      head += decoder.decode(next.value, { stream: true });
+      verdict = sseVerdict(head);
+    }
+    // 不是 SSE：把剩下的读完
+    while (verdict !== true && !done) {
+      const next = await reader.read();
+      if (next.done) done = true;
+      else chunks.push(next.value);
+    }
+  } catch (err) {
+    reader.cancel().catch(() => {});
+    rethrowIfAborted(signal, err);
+    throw networkError(err);
+  }
+  if (verdict === true) {
+    return readStream(chainChunks(chunks, reader), adapter, onDelta, signal);
+  }
+  const text = new TextDecoder().decode(Buffer.concat(chunks));
+  return readNonStream(text, adapter, onDelta, signal);
+}
+
+async function readNonStream(
+  text: string,
+  adapter: ProviderAdapter,
+  onDelta: ((delta: CompletionDelta) => void) | undefined,
+  signal: AbortSignal,
+): Promise<CompletionResult> {
   let json: unknown;
   try {
     json = JSON.parse(text);
@@ -186,7 +281,11 @@ export async function runCompletion(
     if (isEventStream(response)) {
       return await readStream(response.body, adapter, onDelta, signal);
     }
-    return await readNonStream(response, adapter, onDelta, signal);
+    if (request.stream && !isJson(response)) {
+      return await readUnlabeled(response, adapter, onDelta, signal);
+    }
+    const text = await readBodyText(response, signal);
+    return await readNonStream(text, adapter, onDelta, signal);
   } catch (err) {
     rethrowIfAborted(signal, err);
     throw err;

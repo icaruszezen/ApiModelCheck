@@ -65,6 +65,26 @@ export function promptStats(
   return { assigned, enabled, disabled };
 }
 
+/** 能单独检测的提示词：分配给这个模型、并且启用的，按提示词列表的顺序 */
+export function runnablePrompts(
+  model: Pick<AdminModel, "promptIds">,
+  prompts: readonly AdminPrompt[] | undefined,
+): AdminPrompt[] {
+  if (!prompts) return [];
+  const assigned = new Set(model.promptIds);
+  return prompts.filter((prompt) => prompt.enabled && assigned.has(prompt.id));
+}
+
+/** 发起"立即检测"之后的提示：排上了；或者这个模型正在检测，这次不会再排 */
+export function runToast(queued: boolean): {
+  message: string;
+  tone: "success" | "info";
+} {
+  return queued
+    ? { message: "已开始检测", tone: "success" }
+    : { message: "这个模型正在检测中", tone: "info" };
+}
+
 export type NextRunInfo =
   | { kind: "running" }
   | { kind: "model-disabled" }

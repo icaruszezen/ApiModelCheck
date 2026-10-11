@@ -2,10 +2,12 @@
  * 组装 Hono 应用（不监听端口）：测试里直接用 app.request()，server/index.ts 再交给 serve()。
  */
 import { Hono } from "hono";
+import type { Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
+import { compress } from "hono/compress";
 import * as providers from "./providers/index.ts";
 import { createAuth, LoginLimiter, requestHosts } from "./auth.ts";
-import type { AuthConfig } from "./config.ts";
+import { proxyHops, type AuthConfig } from "./config.ts";
 import type { Repo } from "./repo.ts";
 import { adminRoutes, type ListModelsFn } from "./routes/admin.ts";
 import { publicRoutes } from "./routes/public.ts";
@@ -26,13 +28,41 @@ export interface CreateAppOptions {
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
-/** 去掉默认端口，免得 "example.com" 和 "example.com:443" 被当成不同的主机 */
-function normalizeHost(host: string): string {
-  return host.toLowerCase().replace(/:(80|443)$/, "");
+/**
+ * 只取主机名、不管端口：反向代理常把端口弄丢（Host $host）或换成内部端口。
+ * 只给不发 Sec-Fetch-Site 的旧浏览器兜底用（见 isSameOriginWrite）
+ */
+function hostnameOf(host: string): string | null {
+  try {
+    return new URL(`http://${host}`).hostname.toLowerCase() || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 写请求是不是来自本站页面。浏览器发了 Sec-Fetch-Site（页面脚本改不了，也不受代理改写 Host 影响）
+ * 就只认 same-origin：同一主机的其他端口是 same-site，那里的页面也不能来写。
+ * 没发时（旧浏览器、curl 之类）才看 Origin：带了且主机名和请求的 Host 都对不上就拒绝，不带放行。
+ */
+function isSameOriginWrite(c: Context, trustProxy: number): boolean {
+  const site = c.req.header("sec-fetch-site");
+  if (site !== undefined) return site.trim().toLowerCase() === "same-origin";
+  const origin = c.req.header("origin");
+  if (origin === undefined) return true;
+  let originHost: string | null = null;
+  try {
+    originHost = hostnameOf(new URL(origin).host);
+  } catch {
+    originHost = null;
+  }
+  const hosts = requestHosts(c, trustProxy).map(hostnameOf);
+  return originHost !== null && hosts.includes(originHost);
 }
 
 export function createApp(options: CreateAppOptions) {
   const { repo, scheduler, config } = options;
+  const trustProxy = proxyHops(config.trustProxy);
   const listModels = options.listModels ?? providers.listModels;
   const auth = createAuth({
     username: config.adminUsername,
@@ -58,6 +88,9 @@ export function createApp(options: CreateAppOptions) {
     c.res.headers.set("Cache-Control", "no-store");
   });
 
+  // 公开看板轮询频繁、内容多是重复的文本，压缩后小得多（按 Accept-Encoding 选 gzip / deflate）
+  app.use("/api/*", compress());
+
   app.use(
     "/api/*",
     bodyLimit({
@@ -66,23 +99,15 @@ export function createApp(options: CreateAppOptions) {
     }),
   );
 
-  // 防跨站请求：带了 Origin 且和请求的 Host 不一致就拒绝（Cookie 已是 SameSite=Strict，这里再加一道）
+  // 防跨站请求（Cookie 已是 SameSite=Strict，这里再加一道），规则见 isSameOriginWrite
   app.use("/api/admin/*", async (c, next) => {
     const method = c.req.method;
-    if (method !== "GET" && method !== "HEAD") {
-      const origin = c.req.header("origin");
-      if (origin !== undefined) {
-        let originHost: string | null = null;
-        try {
-          originHost = normalizeHost(new URL(origin).host);
-        } catch {
-          originHost = null;
-        }
-        const hosts = requestHosts(c, config.trustProxy).map(normalizeHost);
-        if (!originHost || !hosts.includes(originHost)) {
-          return c.json({ error: "跨站请求被拒绝" }, 403);
-        }
-      }
+    if (
+      method !== "GET" &&
+      method !== "HEAD" &&
+      !isSameOriginWrite(c, trustProxy)
+    ) {
+      return c.json({ error: "跨站请求被拒绝" }, 403);
     }
     await next();
   });
@@ -96,7 +121,7 @@ export function createApp(options: CreateAppOptions) {
       auth,
       limiter,
       username: config.adminUsername,
-      trustProxy: config.trustProxy,
+      trustProxy,
       listModels,
     }),
   );

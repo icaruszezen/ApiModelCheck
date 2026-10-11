@@ -7,6 +7,8 @@ import {
   DEFAULT_SETTINGS,
   maskApiKey,
   Repo,
+  RESTART_MESSAGE,
+  STOPPED_MESSAGE,
   type ChannelCreateData,
   type FinishedResult,
   type RuntimeView,
@@ -407,12 +409,16 @@ describe("记录", () => {
     expect(count("results")).toBe(3);
   });
 
-  it("recoverStaleRunning 把残留的 running 改成 error", () => {
+  it("recoverStaleRunning 把残留的 running 改成 error，并清空这些模型的上次检测时间", () => {
     const ch = channel();
     const p = prompt("题");
     const m = model(ch, { promptIds: [p] });
+    const other = model(ch, { promptIds: [p] });
+    repo.setLastRunAt(m, "2026-01-01T00:00:00.000Z");
+    repo.setLastRunAt(other, "2026-01-01T00:00:00.000Z");
     const running = result(m, p, "running");
     const done = result(m, p);
+    result(other, p);
     expect(
       repo.recoverStaleRunning(
         "服务重启，检测中断",
@@ -425,6 +431,8 @@ describe("记录", () => {
       finishedAt: "2026-02-02T00:00:00.000Z",
     });
     expect(repo.getResult(done)?.status).toBe("success");
+    expect(repo.getModel(m)?.lastRunAt).toBeNull();
+    expect(repo.getModel(other)?.lastRunAt).toBe("2026-01-01T00:00:00.000Z");
   });
 
   it("后台记录列表：筛选、分页、按 id 倒序", () => {
@@ -590,6 +598,40 @@ describe("前台看板", () => {
     expect(idle.channels[0]!.models[0]!.running).toBe(false);
   });
 
+  it("running 时 previous 跳过被服务停止 / 重启打断的记录", () => {
+    const ch = channel();
+    const p = prompt("题");
+    const q = prompt("另一题");
+    const m = model(ch, { promptIds: [p, q], stream: false });
+    const interrupt = (promptId: number, error: string) => {
+      const id = result(m, promptId, "running");
+      repo.finishResult(
+        id,
+        finished({ status: "error", output: "", error, durationMs: 1 }),
+      );
+      return id;
+    };
+    const good = result(m, p, "success", "上次的答案");
+    interrupt(p, RESTART_MESSAGE);
+    interrupt(p, STOPPED_MESSAGE);
+    result(m, p, "running");
+    // 只有被打断的记录时，仍然给出它
+    const onlyInterrupted = interrupt(q, STOPPED_MESSAGE);
+    result(m, q, "running");
+
+    const [checkP, checkQ] = repo.getBoard().channels[0]!.models[0]!.checks;
+    expect(checkP!.latest?.status).toBe("running");
+    expect(checkP!.previous).toMatchObject({
+      id: good,
+      status: "success",
+      output: "上次的答案",
+    });
+    expect(checkQ!.previous).toMatchObject({
+      id: onlyInterrupted,
+      error: STOPPED_MESSAGE,
+    });
+  });
+
   it("已经取消分配的提示词不出现，没有可检测提示词时 nextRunAt 为 null", () => {
     const ch = channel();
     const p = prompt("题");
@@ -615,19 +657,21 @@ describe("前台看板", () => {
     expect(json).not.toMatch(/apiKey|baseUrl|extraHeaders/);
   });
 
-  it("可见性：模型和渠道都启用才可见", () => {
+  it("可见性：模型、渠道、提示词都启用，并且提示词仍分配给模型", () => {
     const ch = channel();
     const off = channel({ enabled: false });
     const p = prompt("题");
+    const unassigned = prompt("没分配");
     const hiddenPrompt = prompt("停用", { enabled: false });
-    const visible = model(ch);
-    const disabled = model(ch, { enabled: false });
-    const inOff = model(off);
-    expect(repo.isModelVisible(visible)).toBe(true);
-    expect(repo.isModelVisible(disabled)).toBe(false);
-    expect(repo.isModelVisible(inOff)).toBe(false);
-    expect(repo.isModelVisible(999)).toBe(false);
-    expect(repo.isPromptVisible(p)).toBe(true);
-    expect(repo.isPromptVisible(hiddenPrompt)).toBe(false);
+    const visible = model(ch, { promptIds: [p, hiddenPrompt] });
+    const disabled = model(ch, { enabled: false, promptIds: [p] });
+    const inOff = model(off, { promptIds: [p] });
+    expect(repo.isCheckVisible(visible, p)).toBe(true);
+    expect(repo.isCheckVisible(visible, unassigned)).toBe(false);
+    expect(repo.isCheckVisible(visible, hiddenPrompt)).toBe(false);
+    expect(repo.isCheckVisible(visible, 999)).toBe(false);
+    expect(repo.isCheckVisible(disabled, p)).toBe(false);
+    expect(repo.isCheckVisible(inOff, p)).toBe(false);
+    expect(repo.isCheckVisible(999, p)).toBe(false);
   });
 });

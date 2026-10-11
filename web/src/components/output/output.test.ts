@@ -265,6 +265,105 @@ describe("OutputView", () => {
     ]);
   });
 
+  it("生成中以 <answer> 这类标签开头的回答直接显示文字，不当网页", () => {
+    const markup = render(createElement(OutputView, { output: "<answer>9.9 更大，因为", running: true }));
+    expect(markup).not.toContain("网页生成中");
+    expect(markup).not.toContain("HTML 网页");
+    expect(markup).toContain("&lt;answer&gt;9.9 更大，因为");
+    expect(markup).toContain("正在生成…");
+  });
+
+  it("网页脚本里单独一行的 ``` 不会把网页切断", () => {
+    const output = [
+      "Markdown 预览页：",
+      "```html",
+      "<!DOCTYPE html>",
+      '<html><body><pre id="o"></pre><script>',
+      "const md = `",
+      "```js",
+      "console.log(1)",
+      "```",
+      "`;",
+      "document.getElementById('o').textContent = md;",
+      "</script></body></html>",
+      "```",
+      "以上。",
+    ].join("\n");
+    const markup = render(createElement(OutputView, { output }));
+    expect(iframes(markup)).toHaveLength(1);
+    expect(markup).toContain("1 个网页");
+    expect(markup).not.toContain("没有写完");
+    expect(markup).not.toContain('aria-label="复制代码"');
+    expect(markup).toContain(">以上。</div>");
+  });
+
+  it("没写语言、内容是一张 SVG 的代码块当网页显示", () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>';
+    const markup = render(createElement(OutputView, { output: `图标：\n\`\`\`\n${svg}\n\`\`\`` }));
+    expect(iframes(markup)).toHaveLength(1);
+    expect(markup).not.toContain('aria-label="复制代码"');
+  });
+
+  it("文字里谈到 <think> 和 </think> 时，答案不会被收进思考过程", () => {
+    const output = "推理模型会先把思考过程写在 <think> 和 </think> 之间，然后才给出正式答案。9.9 比 9.11 大。";
+    const markup = render(createElement(OutputView, { output }));
+    expect(markup).not.toContain(">思考过程</span>");
+    expect(markup).toContain(`>${output.replace("<think>", "&lt;think&gt;").replace("</think>", "&lt;/think&gt;")}</div>`);
+  });
+
+  it("以 <!DOCTYPE html> 开头的说明文字生成中直接显示文字，不当网页", () => {
+    const output = "<!DOCTYPE html> 是 HTML5 的文档类型声明，它告诉浏览器用标准模式渲染页面。";
+    for (const running of [true, false]) {
+      const markup = render(createElement(OutputView, { output, running }));
+      expect(markup).not.toContain("网页生成中");
+      expect(markup).not.toContain("HTML 网页");
+      expect(markup).toContain("&lt;!DOCTYPE html&gt; 是 HTML5");
+    }
+  });
+
+  it("写完的 <button> 片段渲染成网页，生成中先显示文字", () => {
+    const output = '<button id="b">点我</button>\n<script>b.onclick=()=>alert(\'hi\')</script>';
+    const done = render(createElement(OutputView, { output }));
+    expect(iframes(done)).toHaveLength(1);
+    expect(done).toContain("1 个网页");
+    const streaming = render(createElement(OutputView, { output, running: true }));
+    expect(iframes(streaming)).toHaveLength(0);
+    expect(streaming).not.toContain("网页生成中");
+  });
+
+  it("生成中没写语言的 SVG 代码块写到 </svg> 时仍是代码块，围栏关上才当网页", () => {
+    const svg = '<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>';
+    for (const partial of [`图标：\n\`\`\`\n${svg}`, `图标：\n\`\`\`\n${svg}\n\`\``]) {
+      const markup = render(createElement(OutputView, { output: partial, running: true }));
+      expect(markup, partial).toContain('aria-label="复制代码"');
+      expect(markup, partial).not.toContain("网页生成中");
+    }
+    const closed = render(createElement(OutputView, { output: `图标：\n\`\`\`\n${svg}\n\`\`\``, running: true }));
+    expect(iframes(closed)).toHaveLength(1);
+    expect(closed).not.toContain('aria-label="复制代码"');
+  });
+
+  it("分几个围栏讲解一张网页时，说明文字照常显示在网页框外面", () => {
+    const output = [
+      "先写文档头：",
+      "```html",
+      "<!DOCTYPE html>",
+      "<html>",
+      "<head><title>t</title></head>",
+      "```",
+      "再写主体：",
+      "```html",
+      "<body><p>x</p></body>",
+      "</html>",
+      "```",
+      "这样就完成了。",
+    ].join("\n");
+    const markup = render(createElement(OutputView, { output }));
+    expect(iframes(markup)).toHaveLength(2);
+    expect(markup).toContain(">再写主体：</div>");
+    expect(markup).toContain(">这样就完成了。</div>");
+  });
+
   it("空输出：生成中显示等待，否则显示空文案", () => {
     expect(render(createElement(OutputView, { output: "", running: true }))).toContain("等待模型输出…");
     expect(render(createElement(OutputView, { output: "  " }))).toContain("（没有输出）");

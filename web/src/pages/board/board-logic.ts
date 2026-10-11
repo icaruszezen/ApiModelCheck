@@ -30,6 +30,14 @@ export const POLL_RETRY_MS = 5_000;
 /** 连续失败时退避的上限 */
 export const POLL_MAX_BACKOFF_MS = 60_000;
 
+/**
+ * 定时检测的时间过了这么久还没开始，就不再为它快刷新：调度器卡住或者停了的时候，
+ * 不至于一直 3 秒拉一次
+ */
+export const POLL_DUE_GRACE_MS = 120_000;
+/** 到点之后再等这么一点才去拉：调度器到点才排上，一到点就拉多半还看不到它开始 */
+const POLL_DUE_LEAD_MS = 2_000;
+
 /** 有没有任何模型在检测（含排队）或任何一条记录还在进行 */
 export function isBoardActive(board: BoardResponse | undefined): boolean {
   if (!board) return false;
@@ -43,19 +51,41 @@ export function isBoardActive(board: BoardResponse | undefined): boolean {
 }
 
 /**
+ * 没有检测在进行时等多久：快到哪个模型的下次检测时间了，就在到点后不久拉一次；
+ * 已经到点、还没开始的，按检测中的间隔拉，好赶上它开始。到点太久还没开始的不算。
+ * now 是按服务器时钟校正过的当前时间。
+ */
+function idlePollDelay(board: BoardResponse, now: number): number {
+  let delay = POLL_IDLE_MS;
+  for (const channel of board.channels) {
+    for (const model of channel.models) {
+      if (model.checks.length === 0 || !model.nextRunAt) continue;
+      const wait = Date.parse(model.nextRunAt) - now;
+      if (Number.isNaN(wait) || wait < -POLL_DUE_GRACE_MS) continue;
+      delay = Math.min(
+        delay,
+        Math.max(POLL_ACTIVE_MS, wait + POLL_DUE_LEAD_MS),
+      );
+    }
+  }
+  return delay;
+}
+
+/**
  * 下一次刷新等多久。连续失败时按 2 的幂退避（不低于正常间隔、不超过上限），
- * 免得服务器挂了的时候每 3 秒打一次。
+ * 免得服务器挂了的时候每 3 秒打一次。now 是按服务器时钟校正过的当前时间。
  */
 export function nextPollDelay(
   board: BoardResponse | undefined,
   failures: number,
+  now: number,
 ): number {
   const base =
     board === undefined
       ? POLL_RETRY_MS
       : isBoardActive(board)
         ? POLL_ACTIVE_MS
-        : POLL_IDLE_MS;
+        : idlePollDelay(board, now);
   if (!(failures > 0)) return base;
   return Math.max(base, Math.min(base * 2 ** failures, POLL_MAX_BACKOFF_MS));
 }
@@ -370,6 +400,103 @@ export function buildHistoryOptions(
     label:
       row.id === latestId ? `${historyLabel(row)}（最新）` : historyLabel(row),
   }));
+}
+
+/**
+ * 在"历史"里选中的那一次。seenLatest：选中、或者上次确认它还在的时候，
+ * 这条题最近一次记录的版本（latestVersion），用来判断要不要再确认一遍
+ */
+export type Picked =
+  | { id: number; seenLatest: string | null; state: "loading" }
+  | {
+      id: number;
+      seenLatest: string | null;
+      state: "ready";
+      result: ResultDetail;
+    }
+  | { id: number; seenLatest: string | null; state: "error"; message: string };
+
+/**
+ * 最近一次记录的"版本"：id + 状态。变了说明有新结果，或者检测刚结束
+ * （保留条数满了的时候，旧记录就在这一刻被删掉）。从没检测过是 null
+ */
+export function latestVersion(
+  latest: Pick<ResultDetail, "id" | "status"> | null | undefined,
+): string | null {
+  return latest ? `${latest.id}:${latest.status}` : null;
+}
+
+/**
+ * 选中的那一次要不要再去确认它还在：最近一次的版本和上次确认时不一样了。
+ * 管理员清空记录后紧接着又检测了一次时，两次刷新之间可能根本看不到"没有记录"（prunePicks 管不到），
+ * 只能这样发现；旧记录被保留条数挤掉时也一样。
+ * 正在载入的不用（载入本身就是确认），没有最近一次的交给 prunePicks。
+ */
+export function shouldRecheckPick(
+  picked: Picked | null,
+  latest: string | null,
+): boolean {
+  return (
+    picked !== null &&
+    picked.state !== "loading" &&
+    latest !== null &&
+    picked.seenLatest !== latest
+  );
+}
+
+/** 再去确认的结果：还在、已经没了（404）、没问成（网络之类） */
+export type RecheckOutcome =
+  | { kind: "found"; result: ResultDetail }
+  | { kind: "gone" }
+  | { kind: "failed" };
+
+/**
+ * 确认完之后选中的那一次变成什么：没了就作废，回到最新；还在就记下这次确认时的版本。
+ * 没问成时原样返回同一个对象（调用方不用更新），等版本再变时再确认，不反复重试。
+ */
+export function pickAfterRecheck(
+  picked: Picked,
+  latest: string,
+  outcome: RecheckOutcome,
+): Picked | null {
+  switch (outcome.kind) {
+    case "gone":
+      return null;
+    case "failed":
+      return picked;
+    case "found":
+      // 已经在看的不换结果对象：内容没变，换了会让输出（比如 HTML 预览）重新渲染一遍
+      return picked.state === "ready"
+        ? { ...picked, seenLatest: latest }
+        : {
+            id: picked.id,
+            seenLatest: latest,
+            state: "ready",
+            result: outcome.result,
+          };
+  }
+}
+
+/**
+ * 各条检测题在"历史"里选中的那一次（按提示词 id 存），去掉已经作废的：检测题不在了，
+ * 或者记录被管理员清空了（连最近一次都没了）。不去掉的话，新结果一来，被删掉的那次又会冒出来。
+ * 清空之后两次刷新之间就出了新结果的情况看不到"没有记录"，由 shouldRecheckPick 那边补上。
+ * 没有要去掉的就原样返回同一个对象，调用方据此判断要不要更新状态。
+ */
+export function prunePicks<T>(
+  picks: Readonly<Record<number, T>>,
+  checks: readonly Pick<BoardCheck, "prompt" | "latest">[],
+): Readonly<Record<number, T>> {
+  const alive = new Set(
+    checks.filter((check) => check.latest).map((check) => check.prompt.id),
+  );
+  const stale = Object.keys(picks)
+    .map(Number)
+    .filter((id) => !alive.has(id));
+  if (stale.length === 0) return picks;
+  const next = { ...picks };
+  for (const id of stale) delete next[id];
+  return next;
 }
 
 /** 完整记录里摘出历史行需要的字段 */

@@ -30,7 +30,7 @@ import {
   type PromptField,
   type PromptFormValues,
 } from "./prompt-form";
-import { errorMessage } from "./ui";
+import { useSaveError } from "./shell-session";
 
 const FIELD_ORDER: readonly PromptField[] = ["title", "content", "sortOrder"];
 
@@ -65,7 +65,9 @@ export function PromptEditor({
     () => new Set(),
   );
   const [saving, setSaving] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
+  // 因为登录过期没保存上的提示，重新登录后自己收起
+  const saveError = useSaveError();
+  const serverError = saveError.message;
   const alertRef = useRef<HTMLDivElement>(null);
   const baseId = useId();
   const formId = `${baseId}-form`;
@@ -112,14 +114,14 @@ export function PromptEditor({
       return;
     }
     setSaving(true);
-    setServerError(null);
+    saveError.clear();
     try {
       const saved = prompt
         ? await adminApi.updatePrompt(prompt.id, input)
         : await adminApi.createPrompt(input);
       onSaved(saved, prompt === null);
     } catch (error) {
-      setServerError(errorMessage(error));
+      saveError.fail(error);
     } finally {
       setSaving(false);
     }

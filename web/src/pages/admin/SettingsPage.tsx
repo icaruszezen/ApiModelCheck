@@ -39,8 +39,8 @@ import {
   type SettingsField,
   type SettingsFormValues,
 } from "./settings-form";
-import { useAdminSession } from "./shell-session";
-import { AdminPage, errorMessage } from "./ui";
+import { useAdminSession, useSaveError } from "./shell-session";
+import { AdminPage } from "./ui";
 
 const FIELD_ORDER: readonly SettingsField[] = [
   "siteTitle",
@@ -111,7 +111,9 @@ function SettingsForm({ initial }: { initial: Settings }) {
     () => new Set(),
   );
   const [saving, setSaving] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
+  // 因为登录过期没保存上的提示，重新登录后自己收起
+  const saveError = useSaveError();
+  const serverError = saveError.message;
   const alertRef = useRef<HTMLDivElement>(null);
   const baseId = useId();
   const fieldId = (field: SettingsField) => `${baseId}-${field}`;
@@ -141,7 +143,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
       return;
     }
     setSaving(true);
-    setServerError(null);
+    saveError.clear();
     try {
       const next = await adminApi.updateSettings(input);
       setSaved(next);
@@ -151,7 +153,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
       setTouched(new Set());
       toast({ message: "设置已保存", tone: "success" });
     } catch (error) {
-      setServerError(errorMessage(error));
+      saveError.fail(error);
     } finally {
       setSaving(false);
     }
@@ -161,7 +163,7 @@ function SettingsForm({ initial }: { initial: Settings }) {
     setValues(settingsToForm(saved));
     setSubmitted(false);
     setTouched(new Set());
-    setServerError(null);
+    saveError.clear();
   };
 
   return (

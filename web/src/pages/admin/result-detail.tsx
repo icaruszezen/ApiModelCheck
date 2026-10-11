@@ -1,21 +1,32 @@
 /**
- * 检测记录展开后的明细：提示词快照、错误、模型输出。
+ * 检测记录展开后的明细：提示词快照、错误、模型输出，以及"重新检测这一条"。
  * 展开时才挂载，所以这里才去取完整记录；还在检测中的记录自己定时刷新，能看到生成过程。
  */
-import { Alert, Button, cn, Spinner } from "@endfield-ui/react";
+import { Alert, Button, cn, Spinner, useToast } from "@endfield-ui/react";
 import { useEffect, useState, type ReactNode } from "react";
 import type { AdminResultRow } from "../../../../shared/types.ts";
 import { adminApi } from "../../api/client";
+import { PlayIcon } from "../../components/icons";
 import { OutputView } from "../../components/output/OutputView";
 import { formatDateTime } from "../../lib/format";
 import { useAsync } from "../../lib/use-async";
 import { usePolling } from "./model-hooks";
+import { runToast } from "./model-list";
 import { isLongText } from "./result-query";
 import { errorMessage } from "./ui";
 
 const RUNNING_POLL = 3_000;
 
-export function ResultDetailView({ row }: { row: AdminResultRow }) {
+export function ResultDetailView({
+  row,
+  onRerun,
+}: {
+  row: AdminResultRow;
+  /** 重新检测已经排上之后（列表好刷新，新的那条记录出现在最上面） */
+  onRerun?: () => void;
+}) {
+  const toast = useToast();
+  const [rerunning, setRerunning] = useState(false);
   const detail = useAsync(() => adminApi.result(row.id), [row.id]);
   const result = detail.data;
   const running = (result?.status ?? row.status) === "running";
@@ -56,36 +67,65 @@ export function ResultDetailView({ row }: { row: AdminResultRow }) {
 
   const isRunning = result.status === "running";
 
+  // 只把这条提示词再发给这个模型一次；提示词已经不分配给它了、停用了，服务端会说明
+  const rerun = async () => {
+    setRerunning(true);
+    try {
+      const { queued } = await adminApi.runModel(row.modelId, {
+        promptId: row.promptId,
+      });
+      toast(runToast(queued));
+      if (queued) onRerun?.();
+    } catch (error) {
+      toast({ message: errorMessage(error), tone: "danger" });
+    } finally {
+      setRerunning(false);
+    }
+  };
+
   return (
     <div className="flex max-w-4xl min-w-0 flex-col gap-5 py-1">
-      <dl className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-ink-secondary">
-        <Meta label="记录">
-          <span className="font-tech tabular-nums">#{result.id}</span>
-        </Meta>
-        <Meta label="请求方式">{result.stream ? "流式" : "非流式"}</Meta>
-        <Meta label="开始">
-          <span className="font-tech tabular-nums">
-            {formatDateTime(result.startedAt)}
-          </span>
-        </Meta>
-        {result.finishedAt && (
-          <Meta label="结束">
+      <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-2">
+        <dl className="flex flex-wrap gap-x-6 gap-y-1 text-xs text-ink-secondary">
+          <Meta label="记录">
+            <span className="font-tech tabular-nums">#{result.id}</span>
+          </Meta>
+          <Meta label="请求方式">{result.stream ? "流式" : "非流式"}</Meta>
+          <Meta label="开始">
             <span className="font-tech tabular-nums">
-              {formatDateTime(result.finishedAt)}
+              {formatDateTime(result.startedAt)}
             </span>
           </Meta>
+          {result.finishedAt && (
+            <Meta label="结束">
+              <span className="font-tech tabular-nums">
+                {formatDateTime(result.finishedAt)}
+              </span>
+            </Meta>
+          )}
+          {result.finishReason && (
+            <Meta label="结束原因">
+              <span className="font-mono">{result.finishReason}</span>
+            </Meta>
+          )}
+          {detail.error && (
+            <span className="text-danger">
+              刷新失败：{errorMessage(detail.error)}
+            </span>
+          )}
+        </dl>
+        {!isRunning && (
+          <Button
+            variant="light"
+            size="sm"
+            iconStart={<PlayIcon size={14} />}
+            loading={rerunning}
+            onClick={() => void rerun()}
+          >
+            重新检测这一条
+          </Button>
         )}
-        {result.finishReason && (
-          <Meta label="结束原因">
-            <span className="font-mono">{result.finishReason}</span>
-          </Meta>
-        )}
-        {detail.error && (
-          <span className="text-danger">
-            刷新失败：{errorMessage(detail.error)}
-          </span>
-        )}
-      </dl>
+      </div>
 
       <DetailSection title="提示词">
         <PromptSnapshot text={result.promptSnapshot} />

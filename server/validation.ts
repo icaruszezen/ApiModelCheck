@@ -3,7 +3,7 @@
  * 字符串字段先去首尾空白（提示词内容除外，只判断是否全是空白）。
  */
 import { z } from "zod";
-import { ENDPOINT_TYPES, isValidBaseUrl } from "../shared/endpoints.ts";
+import { ENDPOINT_TYPES, baseUrlIssue } from "../shared/endpoints.ts";
 import type {
   ChannelInput,
   LoginInput,
@@ -146,8 +146,10 @@ export const channelSchema: z.ZodType<ChannelInput> = z.object(
     endpointType: z.enum(ENDPOINT_TYPES, { error: "端点类型无效" }),
     baseUrl: text("基础地址", 500, { required: false })
       .default("")
-      .refine(isValidBaseUrl, {
-        error: "基础地址必须是 http:// 或 https:// 开头的有效地址",
+      .superRefine((value, ctx) => {
+        // 和后台表单用同一套规则与提示（如地址里不能带用户名密码）
+        const message = baseUrlIssue(value);
+        if (message) ctx.addIssue({ code: "custom", message, input: value });
       }),
     apiKey: text("API 密钥", 1000, { required: false }).nullable().optional(),
     extraHeaders,

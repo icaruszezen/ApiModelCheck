@@ -30,14 +30,37 @@ export class ApiRequestError extends Error {
   }
 }
 
-/** 后台接口返回 401 时触发：后台外壳监听它，回到登录页 */
+/** 是不是"没登录 / 登录过期"（HTTP 401） */
+export function isUnauthorized(error: unknown): boolean {
+  return error instanceof ApiRequestError && error.status === 401;
+}
+
+/**
+ * 后台接口返回 401 时触发：后台外壳监听它，已登录时弹出重新登录的窗口。
+ * 事件是 CustomEvent，detail 见 UnauthorizedEventDetail
+ */
 export const UNAUTHORIZED_EVENT = "amc:unauthorized";
+
+export interface UnauthorizedEventDetail {
+  /** 这个请求是什么时候发出的（requestClock 的读数）：比最近一次登录还早的 401 带的是旧凭据，不算过期 */
+  startedAt: number;
+}
+
+/** 在重新登录的弹窗里登录成功后由后台外壳触发：因为 401 没载入的列表、表单上的提示据此自己刷新 */
+export const REAUTHENTICATED_EVENT = "amc:reauthenticated";
+
+/** 给请求和登录打时间戳的钟：单调递增，改系统时间也不会倒退 */
+export function requestClock(): number {
+  return performance.now();
+}
 
 async function request<T>(
   method: "GET" | "POST" | "PUT" | "DELETE",
   path: string,
   body?: unknown,
 ): Promise<T> {
+  // 在 fetch 之前取：响应回来时登录状态可能已经变了
+  const startedAt = requestClock();
   let response: Response;
   try {
     response = await fetch(path, {
@@ -63,7 +86,11 @@ async function request<T>(
   }
   if (!response.ok) {
     if (response.status === 401 && path.startsWith("/api/admin/")) {
-      window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+      window.dispatchEvent(
+        new CustomEvent<UnauthorizedEventDetail>(UNAUTHORIZED_EVENT, {
+          detail: { startedAt },
+        }),
+      );
     }
     const message =
       data && typeof data === "object" && "error" in data

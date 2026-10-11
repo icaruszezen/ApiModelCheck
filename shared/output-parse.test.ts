@@ -9,6 +9,20 @@ const CLOCK_DOC = [
   "</html>",
 ].join("\n");
 
+/** 预览 Markdown 的网页：脚本的模板字符串里有单独一行的 ``` */
+const MD_DOC = [
+  "<!DOCTYPE html>",
+  '<html><body><pre id="o"></pre><script>',
+  "const md = `",
+  "# 标题",
+  "```js",
+  "console.log(1)",
+  "```",
+  "`;",
+  "document.getElementById('o').textContent = md;",
+  "</script></body></html>",
+].join("\n");
+
 const segments = (output: string, running = false) => parseOutput(output, { running }).segments;
 
 describe("parseOutput：纯文字", () => {
@@ -177,6 +191,183 @@ describe("parseOutput：围栏代码块", () => {
     ]);
   });
 
+  it("网页文档里单独一行的 ```（脚本字符串里的 Markdown 示例）不会提前结束围栏", () => {
+    expect(segments(`Markdown 预览页：\n\`\`\`html\n${MD_DOC}\n\`\`\`\n以上。`)).toEqual([
+      { kind: "text", text: "Markdown 预览页：" },
+      { kind: "html", html: MD_DOC, complete: true, source: "fence" },
+      { kind: "text", text: "以上。" },
+    ]);
+    // 没写语言的文档围栏一样；</html> 和关闭行之间可以隔着空行
+    expect(segments(`\`\`\`\n${MD_DOC}\n\n\`\`\`\n以上。`)).toEqual([
+      { kind: "html", html: `${MD_DOC}\n`, complete: true, source: "fence" },
+      { kind: "text", text: "以上。" },
+    ]);
+  });
+
+  it("</html> 后面紧跟的不是关闭行时，照常在第一个关闭行结束", () => {
+    expect(segments("```html\n<!DOCTYPE html>\n<html><body>\n```\n页面最后写上 </html> 就行。")).toEqual([
+      { kind: "html", html: "<!DOCTYPE html>\n<html><body>", complete: true, source: "fence" },
+      { kind: "text", text: "页面最后写上 </html> 就行。" },
+    ]);
+    // 其他语言的围栏不看 </html>
+    expect(segments("```md\n<!DOCTYPE html>\n```\n</html>\n```")[0]).toEqual({
+      kind: "code",
+      lang: "md",
+      code: "<!DOCTYPE html>",
+      complete: true,
+    });
+  });
+
+  it("文档围栏里的关闭行不在脚本之类的元素里时，照常结束，不会把后面的说明并进网页", () => {
+    // 分三个围栏讲解一张网页：</html> 在最后一个围栏里
+    const tutorial = [
+      "第一步，先写文档头：",
+      "",
+      "```html",
+      "<!DOCTYPE html>",
+      "<html>",
+      "<head>",
+      '  <meta charset="UTF-8">',
+      "```",
+      "",
+      "第二步，在 head 里加样式：",
+      "",
+      "```html",
+      "  <style>body{margin:0}</style>",
+      "</head>",
+      "```",
+      "",
+      "第三步，写 body 并收尾：",
+      "",
+      "```html",
+      "<body>",
+      "  <div>你好</div>",
+      "</body>",
+      "</html>",
+      "```",
+      "",
+      "这样就完成了。",
+    ].join("\n");
+    const page = (html: string) => ({ kind: "html", html, complete: true, source: "fence" });
+    expect(segments(tutorial)).toEqual([
+      { kind: "text", text: "第一步，先写文档头：" },
+      page('<!DOCTYPE html>\n<html>\n<head>\n  <meta charset="UTF-8">'),
+      { kind: "text", text: "第二步，在 head 里加样式：" },
+      page("  <style>body{margin:0}</style>\n</head>"),
+      { kind: "text", text: "第三步，写 body 并收尾：" },
+      page("<body>\n  <div>你好</div>\n</body>\n</html>"),
+      { kind: "text", text: "这样就完成了。" },
+    ]);
+
+    // 忘了写 </html>，后面另起一个围栏补上
+    const forgot = "```html\n<!DOCTYPE html>\n<html>\n<body>\n<p>hi</p>\n</body>\n```\n\n注意结尾要补上：\n\n```html\n</html>\n```";
+    expect(segments(forgot)).toEqual([
+      page("<!DOCTYPE html>\n<html>\n<body>\n<p>hi</p>\n</body>"),
+      { kind: "text", text: "注意结尾要补上：" },
+      page("</html>"),
+    ]);
+
+    // 说明文字里提到 </html>，后面还有一个没写语言的代码块
+    const prose = "```html\n<!DOCTYPE html>\n<html><body>hi</body>\n```\n说明：文档最后一行是 </html>\n```\nnpm start\n```";
+    expect(segments(prose)).toEqual([
+      page("<!DOCTYPE html>\n<html><body>hi</body>"),
+      { kind: "text", text: "说明：文档最后一行是 </html>" },
+      { kind: "code", lang: "", code: "npm start", complete: true },
+    ]);
+
+    // 脚本在关闭行之前已经关上了：关闭行也不在网页的文字里
+    const closed = "```html\n<!DOCTYPE html>\n<html><body><script>go()</script>\n```\n最后写 </html>\n```";
+    expect(segments(closed)[0]).toEqual(page("<!DOCTYPE html>\n<html><body><script>go()</script>"));
+  });
+
+  it("文本框、<pre>、<template> 里单独一行的 ``` 同样不会提前结束文档围栏", () => {
+    for (const [open, close] of [
+      ["<textarea id=t>", "</textarea>"],
+      ["<pre>", "</pre>"],
+      ['<template id="md">', "</template>"],
+      ["<style>/*", "*/</style>"],
+    ]) {
+      const doc = `<!DOCTYPE html>\n<html><body>${open}\n# 示例\n\`\`\`\nx\n\`\`\`\n${close}</body></html>`;
+      expect(segments(`\`\`\`html\n${doc}\n\`\`\`\n以上。`), open).toEqual([
+        { kind: "html", html: doc, complete: true, source: "fence" },
+        { kind: "text", text: "以上。" },
+      ]);
+    }
+    // 脚本里的 "<style>" 字符串不算打开了样式，脚本关上后就不在里面了
+    const quoted = "```html\n<!DOCTYPE html>\n<html><body><script>const s = '<style>';</script>\n```\n</body></html>\n```";
+    expect(segments(quoted)[0]).toEqual({
+      kind: "html",
+      html: "<!DOCTYPE html>\n<html><body><script>const s = '<style>';</script>",
+      complete: true,
+      source: "fence",
+    });
+  });
+
+  it("紧挨着的两个网页围栏不会并成一个", () => {
+    const one = "<!DOCTYPE html>\n<html><body>1</body></html>";
+    const two = "<!DOCTYPE html>\n<html><body>2</body></html>";
+    const fence = (html: string) => `\`\`\`html\n${html}\n\`\`\``;
+    const page = (html: string) => ({ kind: "html", html, complete: true, source: "fence" });
+    expect(segments(`${fence(one)}\n${fence(two)}`)).toEqual([page(one), page(two)]);
+    // 第一个文档没写 </html>，也不会跨进第二个文档里去找
+    const bare = "<!DOCTYPE html>\n<body>1</body>";
+    expect(segments(`${fence(bare)}\n${fence(two)}`)).toEqual([page(bare), page(two)]);
+    // 片段围栏
+    expect(segments(`${fence("<div>一</div>")}\n${fence("<div>二</div>")}`)).toEqual([
+      page("<div>一</div>"),
+      page("<div>二</div>"),
+    ]);
+    expect(segments(`${fence("<div>一</div>")}\n${fence(two)}`)).toEqual([page("<div>一</div>"), page(two)]);
+  });
+
+  it("没写语言（或 xml / markup / text）、内容整个是一张 SVG 的围栏也是网页", () => {
+    const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">\n  <circle cx="5" cy="5" r="4"/>\n</svg>';
+    for (const lang of ["", "xml", "XML", "markup", "text", "plaintext"]) {
+      expect(segments(`画好了：\n\`\`\`${lang}\n${svg}\n\`\`\``)).toEqual([
+        { kind: "text", text: "画好了：" },
+        { kind: "html", html: svg, complete: true, source: "fence" },
+      ]);
+    }
+    const declared = `<?xml version="1.0" encoding="UTF-8"?>\n<!-- 图标 -->\n${svg}\n`;
+    expect(segments(`\`\`\`xml\n${declared}\n\`\`\``)).toEqual([
+      { kind: "html", html: declared, complete: true, source: "fence" },
+    ]);
+  });
+
+  it("不是整个一张 SVG 的围栏仍是代码", () => {
+    expect(segments("```xml\n<note><to>x</to></note>\n```")[0]).toMatchObject({ kind: "code", lang: "xml" });
+    expect(segments("```\n<svg><rect/></svg>\n<p>后面还有</p>\n```")[0]).toMatchObject({ kind: "code" });
+    expect(segments("```\n<p>前面有</p>\n<svg><rect/></svg>\n```")[0]).toMatchObject({ kind: "code" });
+    expect(segments("```js\n<svg><rect/></svg>\n```")[0]).toMatchObject({ kind: "code", lang: "js" });
+    expect(segments("```\n<svgx></svg>\n```")[0]).toMatchObject({ kind: "code" });
+    // 还没写到 </svg>
+    expect(segments("```\n<svg><rect/>", true)[0]).toMatchObject({ kind: "code", complete: false });
+  });
+
+  it("生成中没写语言的 SVG 围栏：关上之前一直是代码，关上之后才是网页，不来回变", () => {
+    const svg = '<svg viewBox="0 0 10 10"><circle cx="5" cy="5" r="4"/></svg>';
+    for (const [lang, body] of [
+      ["", svg],
+      ["xml", `${svg}\n${svg}`],
+    ]) {
+      const output = `图标：\n\`\`\`${lang}\n${body}\n\`\`\`\n就是这样。`;
+      const closeAt = output.lastIndexOf("```") + 3;
+      const kinds: string[] = [];
+      for (let size = 1; size <= output.length; size++) {
+        const fence = segments(output.slice(0, size), true)[1];
+        if (!fence) continue;
+        const kind = `${fence.kind}${fence.kind !== "text" && fence.complete ? "" : "~"}`;
+        if (kinds[kinds.length - 1] !== kind) kinds.push(kind);
+        // 关闭行写全之前都是代码
+        if (size < closeAt) expect(fence.kind, output.slice(0, size)).toBe("code");
+      }
+      expect(kinds).toEqual(["code~", "html"]);
+      expect(segments(output)[1]).toEqual({ kind: "html", html: body, complete: true, source: "fence" });
+    }
+    // 生成结束了围栏还没关（输出被截断）：照常认 SVG
+    expect(segments(`\`\`\`\n${svg}`)[0]).toEqual({ kind: "html", html: svg, complete: false, source: "fence" });
+  });
+
   it("围栏里的 <!DOCTYPE html> 不会再被当成原始文档", () => {
     expect(segments("```js\nconst page = `\n<!DOCTYPE html><html><head></head><body></body></html>`;\n```")).toEqual([
       {
@@ -287,7 +478,7 @@ describe("parseOutput：整段都是 HTML 片段", () => {
     expect(segments(text)).toEqual([{ kind: "text", text }]);
   });
 
-  it("生成中以 < 加字母开头的整段先当没写完的片段", () => {
+  it("生成中以页面标签开头的整段先当没写完的片段", () => {
     expect(segments("<div class=\"a\">\n  <p>还在写", true)).toEqual([
       { kind: "html", html: '<div class="a">\n  <p>还在写', complete: false, source: "fragment" },
     ]);
@@ -296,6 +487,101 @@ describe("parseOutput：整段都是 HTML 片段", () => {
       { kind: "html", html: "<div>x</div>", complete: false, source: "fragment" },
     ]);
     expect(segments("< 不是标签", true)).toEqual([{ kind: "text", text: "< 不是标签" }]);
+    expect(segments("<h1>标题</h1>\n<p>还在", true)[0]).toMatchObject({ kind: "html", complete: false });
+  });
+
+  it("生成中标签名只写了一半时，是页面标签的前缀也先当没写完的片段", () => {
+    for (const html of ["<di", "<!DOC", "<sect", "<TEMPL", "<p"]) {
+      expect(segments(html, true)).toEqual([{ kind: "html", html, complete: false, source: "fragment" }]);
+    }
+    // 只有一个字母时分不出是 <body> 还是 <b>，先当文字：<b>结论</b> 开头的回答从头到尾都是文字
+    for (const text of ["<b", "<d", "<a"]) {
+      expect(segments(text, true)).toEqual([{ kind: "text", text }]);
+    }
+    const answer = "<b>结论</b>：9.9 更大";
+    for (let size = 1; size <= answer.length; size++) {
+      expect(segments(answer.slice(0, size), true)[0]?.kind, answer.slice(0, size)).toBe("text");
+    }
+  });
+
+  it("生成中以 <!DOCTYPE html> 开头的是没写完的文档", () => {
+    expect(segments("<!DOCTYPE html>", true)).toEqual([
+      { kind: "html", html: "<!DOCTYPE html>", complete: false, source: "document" },
+    ]);
+  });
+
+  it("以行内标签、自定义标签开头的回答，生成中和写完都是文字", () => {
+    for (const text of [
+      "<answer>9.9 更大，因为 0.9 > 0.11",
+      "<answer>9.9 更大</answer>\n因为 0.9 > 0.11。",
+      "<b>结论</b>：9.9 更大",
+      "<reflection>先比较整数部分",
+      "<result>9.9</result>",
+      "<span",
+      "<a href=",
+      "<",
+      "<!",
+    ]) {
+      expect(segments(text, true)).toEqual([{ kind: "text", text }]);
+      expect(segments(text)).toEqual([{ kind: "text", text }]);
+    }
+    // 生成中只看开头；写完时整段以 < 开头、> 结尾、带 </div> 这类闭合标签就算片段
+    const wrapped = "<answer><div>9.9 更大</div></answer>";
+    expect(segments(wrapped, true)).toEqual([{ kind: "text", text: wrapped }]);
+    expect(segments(wrapped)).toEqual([{ kind: "html", html: wrapped, complete: true, source: "fragment" }]);
+  });
+
+  it("写完时不看开头标签：<button>、<details> 开头、带 </script> / </div> 的片段也是网页", () => {
+    for (const html of [
+      '<button id="b">点我</button>\n<script>b.onclick=()=>alert(\'hi\')</script>',
+      "<details><summary>展开</summary><div>内容</div></details>",
+      "<center><h1>你好</h1><div>世界</div></center>",
+    ]) {
+      expect(segments(html)).toEqual([{ kind: "html", html, complete: true, source: "fragment" }]);
+      // 生成中这些开头不在名单里，先显示文字，写完才变成网页
+      expect(segments(html, true)).toEqual([{ kind: "text", text: html }]);
+    }
+    // 没有那几个闭合标签、或者不以 > 结尾的，写完了也是文字
+    for (const text of ["<answer>9.9 更大</answer>", "<b>结论</b>：9.9 更大", "<h1>标题</h1>\n<p>正文</p>"]) {
+      expect(segments(text)).toEqual([{ kind: "text", text }]);
+    }
+  });
+
+  it("以 <!DOCTYPE html> 开头的说明文字，生成中和写完都是文字", () => {
+    const prose = "<!DOCTYPE html> 是 HTML5 的文档类型声明，它告诉浏览器用标准模式渲染页面。";
+    expect(segments(prose)).toEqual([{ kind: "text", text: prose }]);
+    expect(segments(prose, true)).toEqual([{ kind: "text", text: prose }]);
+    // 声明后面一出现文字就是文字，之后一直是文字
+    const firstWord = prose.indexOf("是") + 1;
+    for (let size = firstWord; size <= prose.length; size++) {
+      const partial = prose.slice(0, size);
+      expect(segments(partial, true), partial).toEqual([{ kind: "text", text: partial.trimEnd() }]);
+    }
+    expect(segments("<!DOCTYPE html>\n这是声明", true)).toEqual([{ kind: "text", text: "<!DOCTYPE html>\n这是声明" }]);
+  });
+
+  it("生成中的真网页从 <!D 开始每一步都是网页，不会中途变成文字", () => {
+    const page = "<!DOCTYPE html>\n<html><head><title>t</title></head><body><div>hi</div></body></html>";
+    for (let size = 3; size < page.length; size++) {
+      const partial = page.slice(0, size);
+      const parsed = segments(partial, true);
+      expect(parsed, partial).toHaveLength(1);
+      expect(parsed[0], partial).toMatchObject({ kind: "html", complete: false });
+    }
+    expect(segments(page)).toEqual([{ kind: "html", html: page, complete: true, source: "document" }]);
+  });
+
+  it("开头的 XML 声明、注释之后才看页面标签", () => {
+    const commented = "<!-- 卡片 -->\n<div>x</div>";
+    expect(segments(commented)).toEqual([
+      { kind: "html", html: commented, complete: true, source: "fragment" },
+    ]);
+    expect(segments("<!-- 卡片 -->\n<di", true)).toEqual([
+      { kind: "html", html: "<!-- 卡片 -->\n<di", complete: false, source: "fragment" },
+    ]);
+    expect(segments("<!-- 卡片", true)).toEqual([{ kind: "text", text: "<!-- 卡片" }]);
+    const svg = '<?xml version="1.0"?>\n<svg viewBox="0 0 1 1"><rect width="1" height="1"/></svg>';
+    expect(segments(svg)).toEqual([{ kind: "html", html: svg, complete: true, source: "fragment" }]);
   });
 });
 
@@ -359,6 +645,78 @@ describe("parseOutput：思考标签", () => {
       reasoningOpen: false,
       segments: [{ kind: "text", text: "9.9 更大。" }],
     });
+    expect(parseOutput("思考…\n</think>\n\n答案")).toEqual({
+      reasoning: "思考…",
+      reasoningOpen: false,
+      segments: [{ kind: "text", text: "答案" }],
+    });
+    // 思考过程里写完的代码块不影响
+    expect(parseOutput("先写代码：\n```js\nlet a = 1;\n```\n</think>\n\n答案")).toEqual({
+      reasoning: "先写代码：\n```js\nlet a = 1;\n```",
+      reasoningOpen: false,
+      segments: [{ kind: "text", text: "答案" }],
+    });
+  });
+
+  it("前面出现过 <think> 开头标签时，后面的 </think> 是在谈论标签", () => {
+    const text = "推理模型会把思考过程写在 <think> 和 </think> 之间，然后才给出答案。";
+    expect(parseOutput(text)).toEqual({
+      reasoning: "",
+      reasoningOpen: false,
+      segments: [{ kind: "text", text }],
+    });
+    expect(parseOutput("用 <THINKING> 开头、</think> 结尾").reasoning).toBe("");
+  });
+
+  it("代码块里的 </think> 不当成思考过程的结束", () => {
+    const page =
+      "<!DOCTYPE html>\n<html><body><p>推理模型会输出 <b><think></b> … <b></think></b> 两个标签</p></body></html>";
+    expect(parseOutput(`示例页面：\n\`\`\`html\n${page}\n\`\`\`\n说明完毕。`)).toEqual({
+      reasoning: "",
+      reasoningOpen: false,
+      segments: [
+        { kind: "text", text: "示例页面：" },
+        { kind: "html", html: page, complete: true, source: "fence" },
+        { kind: "text", text: "说明完毕。" },
+      ],
+    });
+    // 前面没有开头标签、只在代码块里出现的 </think>
+    const script = "<script>\nconst close = (r) => `${r}" + "</think>`;\n</script>";
+    expect(parseOutput(`\`\`\`html\n${script}\n\`\`\`\n用法见上。`)).toEqual({
+      reasoning: "",
+      reasoningOpen: false,
+      segments: [
+        { kind: "html", html: script, complete: true, source: "fence" },
+        { kind: "text", text: "用法见上。" },
+      ],
+    });
+  });
+
+  it("没有围栏的网页文档里的 </think> 不当成思考过程的结束", () => {
+    const page =
+      "<!DOCTYPE html>\n<html><body><script>\nconst r = 'x';\nconst s = `${r}" + "</think>`;\n</script></body></html>";
+    for (const output of [page, `网页如下：\n${page}\n就这些。`]) {
+      const parsed = parseOutput(output);
+      expect(parsed.reasoning).toBe("");
+      expect(parsed.segments.filter((segment) => segment.kind === "html")).toEqual([
+        { kind: "html", html: page, complete: true, source: "document" },
+      ]);
+    }
+    // 生成中文档还没写到 </html>
+    const partial = page.slice(0, page.indexOf("</script>"));
+    expect(parseOutput(partial, { running: true })).toEqual({
+      reasoning: "",
+      reasoningOpen: false,
+      segments: [{ kind: "html", html: partial, complete: false, source: "document" }],
+    });
+    // 文档之前、文档之外的 </think> 照常算：开头标签被吞掉的思考过程后面跟着网页
+    expect(parseOutput(`要写一个页面。\n</think>\n${page}`)).toEqual({
+      reasoning: "要写一个页面。",
+      reasoningOpen: false,
+      segments: [{ kind: "html", html: page, complete: true, source: "document" }],
+    });
+    const done = "<!DOCTYPE html><html><body>草稿</body></html>";
+    expect(parseOutput(`先打个草稿：${done}\n</think>\n答案`).reasoning).toBe(`先打个草稿：${done}`);
   });
 
   it("文字里谈到 `</think>` 标签时不当成思考过程的结束", () => {
@@ -403,5 +761,19 @@ describe("parseOutput：病态输入不会卡住", () => {
     expect(segments("<html><p>".repeat(60000))[0]?.kind).toBe("text");
     expect(segments("<html ".repeat(60000))[0]?.kind).toBe("text");
     expect(segments("<!doctype html ".repeat(60000))[0]?.kind).toBe("text");
+  });
+
+  it("成千上万个代码块里的 </think>、文档围栏里的关闭行", () => {
+    expect(parseOutput("```\n</think>\n```\n".repeat(30000)).reasoning).toBe("");
+    expect(segments("```html\n<html>\n```\n".repeat(30000))).toHaveLength(30000);
+    expect(segments("```html\n<html>\n```\n</html>\n".repeat(20000))).toHaveLength(40000);
+  });
+
+  it("成千上万个原始文档里的 </think>、文档围栏里的脚本标签", () => {
+    const doc = "<!DOCTYPE html><html><body><script>s=`${r}</think>`</script></body></html>\n";
+    expect(parseOutput(doc.repeat(20000)).reasoning).toBe("");
+    const one = "<!DOCTYPE html>\n<html><body><script>\n" + "x=`${r}</think>`;\n".repeat(50000);
+    expect(parseOutput(one).reasoning).toBe("");
+    expect(segments("```html\n<!DOCTYPE html>\n<script><style><pre>\n```\n".repeat(20000))).toHaveLength(20000);
   });
 });

@@ -30,7 +30,7 @@ import {
   type ChannelField,
   type ChannelFormValues,
 } from "./channel-form";
-import { errorMessage } from "./ui";
+import { useSaveError } from "./shell-session";
 
 const ENDPOINT_OPTIONS = ENDPOINT_TYPES.map((type) => ({
   value: type,
@@ -69,7 +69,9 @@ export function ChannelEditor({
     () => new Set(),
   );
   const [saving, setSaving] = useState(false);
-  const [serverError, setServerError] = useState<string | null>(null);
+  // 因为登录过期没保存上的提示，重新登录后自己收起
+  const saveError = useSaveError();
+  const serverError = saveError.message;
   const [showKey, setShowKey] = useState(false);
   const alertRef = useRef<HTMLDivElement>(null);
   const baseId = useId();
@@ -107,14 +109,14 @@ export function ChannelEditor({
       return;
     }
     setSaving(true);
-    setServerError(null);
+    saveError.clear();
     try {
       const saved = channel
         ? await adminApi.updateChannel(channel.id, input)
         : await adminApi.createChannel(input);
       onSaved(saved, channel === null);
     } catch (error) {
-      setServerError(errorMessage(error));
+      saveError.fail(error);
     } finally {
       setSaving(false);
     }

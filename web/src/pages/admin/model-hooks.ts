@@ -1,7 +1,13 @@
 /**
- * 模型页和检测记录页共用的两个小 hook：定时刷新、跟着走的"现在"。
+ * 模型页和检测记录页共用的几个小 hook：定时刷新、跟着走的"现在"、屏幕宽度。
  */
-import { useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 
 /**
  * 每隔 delay 毫秒调用一次 callback（上一次结束后才开始计时，请求慢时不会叠在一起）。
@@ -62,4 +68,24 @@ export function useNow(intervalMs: number): number {
     return () => clearInterval(timer);
   }, [intervalMs]);
   return now;
+}
+
+/** 媒体查询现在是否成立，跟着窗口变化；没有 matchMedia 的环境当作不成立 */
+export function useMediaQuery(query: string): boolean {
+  const subscribe = useCallback(
+    (onChange: () => void) => {
+      if (typeof window.matchMedia !== "function") return () => {};
+      const media = window.matchMedia(query);
+      media.addEventListener("change", onChange);
+      return () => media.removeEventListener("change", onChange);
+    },
+    [query],
+  );
+  return useSyncExternalStore(
+    subscribe,
+    () =>
+      typeof window.matchMedia === "function" &&
+      window.matchMedia(query).matches,
+    () => false,
+  );
 }

@@ -145,6 +145,52 @@ describe("openai-chat", () => {
     ]);
     expect(result.output).toBe("ok");
   });
+
+  it("最大输出 tokens：OpenAI 推理模型和官方地址用 max_completion_tokens，其余用 max_tokens", () => {
+    const body = (model: string, baseUrl: string) =>
+      openaiChat.buildBody({
+        endpointType: "openai-chat",
+        baseUrl,
+        apiKey: "",
+        extraHeaders: {},
+        model,
+        prompt: "p",
+        stream: false,
+        maxTokens: 4000,
+        temperature: null,
+        signal: new AbortController().signal,
+      });
+    const relay = "https://relay.example/v1";
+    for (const model of [
+      "gpt-5",
+      "GPT-5-mini",
+      "o1",
+      "o3-mini",
+      "o4-mini",
+      "openai/gpt-5.1",
+      "openai/o3",
+    ]) {
+      const result = body(model, relay);
+      expect(result.max_completion_tokens).toBe(4000);
+      expect(result).not.toHaveProperty("max_tokens");
+    }
+    // 官方地址（含留空用默认值）上的任何模型
+    expect(body("gpt-4o", "")).toMatchObject({ max_completion_tokens: 4000 });
+    expect(body("gpt-4.1", "https://api.openai.com/v1/")).toMatchObject({
+      max_completion_tokens: 4000,
+    });
+    for (const model of [
+      "gpt-4o",
+      "deepseek-chat",
+      "qwen3-max",
+      "openai/gpt-4o",
+      "omni-moderation",
+    ]) {
+      const result = body(model, relay);
+      expect(result.max_tokens).toBe(4000);
+      expect(result).not.toHaveProperty("max_completion_tokens");
+    }
+  });
 });
 
 describe("openai-responses", () => {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createAuth,
+  forwardedClientIp,
   LOGIN_BLOCK_MS,
   LOGIN_MAX_FAILURES,
   LOGIN_WINDOW_MS,
@@ -106,5 +107,26 @@ describe("LoginLimiter", () => {
     for (let i = 0; i < LOGIN_MAX_FAILURES - 1; i++)
       limiter.recordFailure("ip-99", 1000);
     expect(limiter.isBlocked("ip-99", 1001)).toBe(true);
+  });
+});
+
+describe("forwardedClientIp", () => {
+  it("从右往左数第 hops 个，左边客户端伪造的部分不用", () => {
+    expect(forwardedClientIp("spoof, 203.0.113.7", 1)).toBe("203.0.113.7");
+    expect(forwardedClientIp("203.0.113.7", 1)).toBe("203.0.113.7");
+    expect(forwardedClientIp("spoof, 198.51.100.1, 10.0.0.2", 2)).toBe(
+      "198.51.100.1",
+    );
+    // 多个 X-Forwarded-For 头会被合并成逗号分隔；空项和空白去掉
+    expect(forwardedClientIp(" a ,, b , ", 1)).toBe("b");
+    expect(forwardedClientIp(" a ,, b , ", 2)).toBe("a");
+  });
+
+  it("不信任代理、没有这个头或层数不够时返回 undefined", () => {
+    expect(forwardedClientIp("1.1.1.1", 0)).toBeUndefined();
+    expect(forwardedClientIp(undefined, 1)).toBeUndefined();
+    expect(forwardedClientIp("", 1)).toBeUndefined();
+    expect(forwardedClientIp(" , ", 1)).toBeUndefined();
+    expect(forwardedClientIp("10.0.0.2", 2)).toBeUndefined();
   });
 });

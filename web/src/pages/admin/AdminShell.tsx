@@ -1,5 +1,6 @@
 /**
- * 后台外壳：宽屏是左边的侧轨，窄于 1024px 换成顶栏 + 全屏菜单（是换一套，不是把侧轨缩小）。
+ * 后台外壳：宽屏是左边的侧轨，窄于 1280px 换成顶栏 + 全屏菜单（是换一套，不是把侧轨缩小）。
+ * 后台几页都是列很多的表格，1024–1279px 之间把侧轨的宽度让给表格。
  * 两套导航用同一份栏目表，当前栏目从地址里认。
  */
 import {
@@ -83,7 +84,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
     <div className="flex min-h-dvh bg-surface text-ink">
       <SideRail
         aria-label="后台导航"
-        className="hidden lg:flex"
+        className="hidden xl:flex"
         brand={<BrandLink />}
         tools={
           <>
@@ -123,7 +124,7 @@ export function AdminShell({ children }: { children: ReactNode }) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <TopBar
-          className="lg:hidden"
+          className="xl:hidden"
           brand={<BrandLink />}
           tools={<ThemeToggle />}
           menu={

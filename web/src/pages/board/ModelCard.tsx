@@ -9,7 +9,7 @@ import {
   TagPair,
 } from "@endfield-ui/react";
 import { useState, type ReactNode } from "react";
-import type { BoardModel } from "../../../../shared/types.ts";
+import type { BoardCheck, BoardModel } from "../../../../shared/types.ts";
 import {
   formatDateTime,
   formatInterval,
@@ -24,7 +24,9 @@ import {
   modelHeading,
   nextRunText,
   pickTab,
+  prunePicks,
   runningCheck,
+  type Picked,
 } from "./board-logic";
 import { CheckView } from "./CheckView";
 import { useNow } from "./now";
@@ -37,6 +39,37 @@ export function ModelCard({ model }: { model: BoardModel }) {
   const active = pickTab(model.checks, tab);
   const [firstCheck] = model.checks;
 
+  // 各条题在"历史"里选中的那一次，按提示词 id 存在这里而不是题里面：
+  // 未选中的页签不渲染内容，放在题里面的话一切换就丢了
+  const [pickedState, setPickedState] = useState<
+    Readonly<Record<number, Picked>>
+  >({});
+  // 检测题被撤掉、或者记录被管理员清空时，选中的那次作废，新结果来了也不再冒出来。
+  // 清空后两次刷新之间就出了新结果（这里看不到"没有记录"）的，由 CheckView 去确认还在不在
+  const picks = prunePicks(pickedState, model.checks);
+  if (picks !== pickedState) setPickedState(picks);
+  const checkView = (check: BoardCheck, single: boolean) => {
+    const promptId = check.prompt.id;
+    // 按提示词区分实例：只有一条题时换了一道题，展开之类的状态不带过去
+    return (
+      <CheckView
+        key={promptId}
+        model={model}
+        check={check}
+        single={single}
+        picked={picks[promptId] ?? null}
+        onPickedChange={(next) =>
+          setPickedState((prev) => {
+            const copy = { ...prev };
+            if (next) copy[promptId] = next;
+            else delete copy[promptId];
+            return copy;
+          })
+        }
+      />
+    );
+  };
+
   let body: ReactNode;
   if (!firstCheck) {
     body = (
@@ -45,15 +78,7 @@ export function ModelCard({ model }: { model: BoardModel }) {
       </p>
     );
   } else if (model.checks.length === 1) {
-    // 按提示词区分实例：换了一道题时，历史选择之类的状态不带过去
-    body = (
-      <CheckView
-        key={firstCheck.prompt.id}
-        model={model}
-        check={firstCheck}
-        single
-      />
-    );
+    body = checkView(firstCheck, true);
   } else {
     body = (
       <Tabs
@@ -85,7 +110,7 @@ export function ModelCard({ model }: { model: BoardModel }) {
         </TabList>
         {model.checks.map((check) => (
           <TabPanel key={check.prompt.id} value={String(check.prompt.id)}>
-            <CheckView model={model} check={check} single={false} />
+            {checkView(check, false)}
           </TabPanel>
         ))}
       </Tabs>

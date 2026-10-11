@@ -162,10 +162,33 @@ function firstHeaderValue(value: string | undefined): string | undefined {
   return first ? first : undefined;
 }
 
-/** 客户端 IP：信任代理时取 X-Forwarded-For 的第一个，否则取连接的对端地址 */
-export function clientIp(c: Context, trustProxy: boolean): string {
-  if (trustProxy) {
-    const forwarded = firstHeaderValue(c.req.header("x-forwarded-for"));
+/**
+ * 从 X-Forwarded-For 里取信任的第 hops 层代理看到的客户端地址：从右往左数第 hops 个。
+ * 每层代理都把它看到的对端地址追加在最右边，左边的部分客户端可以随便伪造，所以不能取第一个。
+ * 列表比 hops 短（请求没经过那么多层代理）时返回 undefined。
+ */
+export function forwardedClientIp(
+  value: string | undefined,
+  hops: number,
+): string | undefined {
+  if (!value || hops < 1) return undefined;
+  const entries = value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return entries.length >= hops ? entries[entries.length - hops] : undefined;
+}
+
+/**
+ * 客户端 IP：信任 trustProxy 层代理时按 X-Forwarded-For 从右往左数，否则（或头里不够那么多层时）
+ * 取连接的对端地址
+ */
+export function clientIp(c: Context, trustProxy: number): string {
+  if (trustProxy > 0) {
+    const forwarded = forwardedClientIp(
+      c.req.header("x-forwarded-for"),
+      trustProxy,
+    );
     if (forwarded) return forwarded;
   }
   try {
@@ -177,8 +200,8 @@ export function clientIp(c: Context, trustProxy: boolean): string {
 }
 
 /** 请求是不是 https（决定 Cookie 要不要加 Secure） */
-export function isHttps(c: Context, trustProxy: boolean): boolean {
-  if (trustProxy) {
+export function isHttps(c: Context, trustProxy: number): boolean {
+  if (trustProxy > 0) {
     const proto = firstHeaderValue(c.req.header("x-forwarded-proto"));
     if (proto) return proto.toLowerCase() === "https";
   }
@@ -190,7 +213,7 @@ export function isHttps(c: Context, trustProxy: boolean): boolean {
 }
 
 /** 请求的 Host：优先 Host 头；信任代理时也接受 X-Forwarded-Host */
-export function requestHosts(c: Context, trustProxy: boolean): string[] {
+export function requestHosts(c: Context, trustProxy: number): string[] {
   const hosts: string[] = [];
   const host = c.req.header("host");
   if (host) hosts.push(host.trim().toLowerCase());
@@ -201,7 +224,7 @@ export function requestHosts(c: Context, trustProxy: boolean): string[] {
       // 没有可用的 Host
     }
   }
-  if (trustProxy) {
+  if (trustProxy > 0) {
     const forwarded = firstHeaderValue(c.req.header("x-forwarded-host"));
     if (forwarded) hosts.push(forwarded.toLowerCase());
   }

@@ -28,25 +28,25 @@ export const ENDPOINT_META: Record<EndpointType, EndpointMeta> = {
     label: "OpenAI Chat Completions",
     short: "Chat Completions",
     defaultBaseUrl: "https://api.openai.com/v1",
-    hint: "POST {基础地址}/chat/completions。绝大多数 OpenAI 兼容的中转与开源推理服务用这一种。",
+    hint: "POST {基础地址}/chat/completions（只写域名时先补 /v1）。绝大多数 OpenAI 兼容的中转与开源推理服务用这一种。",
   },
   "openai-responses": {
     label: "OpenAI Responses",
     short: "Responses",
     defaultBaseUrl: "https://api.openai.com/v1",
-    hint: "POST {基础地址}/responses。OpenAI 新一代接口。",
+    hint: "POST {基础地址}/responses（只写域名时先补 /v1）。OpenAI 新一代接口。",
   },
   anthropic: {
     label: "Anthropic Messages",
     short: "Messages",
     defaultBaseUrl: "https://api.anthropic.com",
-    hint: "POST {基础地址}/v1/messages，使用 x-api-key 认证。",
+    hint: "POST {基础地址}/v1/messages（地址已以 /v1 这类版本段结尾时不再补 /v1），使用 x-api-key 认证。",
   },
   gemini: {
     label: "Google Gemini",
     short: "Gemini",
     defaultBaseUrl: "https://generativelanguage.googleapis.com",
-    hint: "POST {基础地址}/v1beta/models/{模型}:generateContent，使用 x-goog-api-key 认证。",
+    hint: "POST {基础地址}/v1beta/models/{模型}:generateContent（地址已以版本段结尾或含 /publishers/ 时不再补 /v1beta），使用 x-goog-api-key 认证。",
   },
 };
 
@@ -64,13 +64,16 @@ const REQUEST_SUFFIX: Record<Exclude<EndpointType, "gemini">, string> = {
   anthropic: "/messages",
 };
 
-/** 基础地址只写到域名（没有路径）时补上的版本段 */
+/** 要补上的版本段：OpenAI 只在基础地址只写到域名（没有路径）时补，Anthropic / Gemini 见 apiRootPath */
 const VERSION_PREFIX: Record<EndpointType, string> = {
   "openai-chat": "/v1",
   "openai-responses": "/v1",
   anthropic: "/v1",
   gemini: "/v1beta",
 };
+
+/** 路径的最后一段已经是版本段（v1、v1beta、v2alpha…） */
+const VERSION_SEGMENT = /^v\d+[a-z0-9]*$/i;
 
 function parseBase(type: EndpointType, baseUrl: string): URL {
   const raw = baseUrl.trim() || ENDPOINT_META[type].defaultBaseUrl;
@@ -79,10 +82,16 @@ function parseBase(type: EndpointType, baseUrl: string): URL {
 
 /**
  * 去掉已经写进基础地址里的请求后缀，得到"版本段"那一层的路径（不带末尾斜杠）。
+ * - 没有路径：补上版本段；
+ * - OpenAI 两种类型：有路径就原样用（兼容服务的版本段五花八门，如 /api/paas/v4、/openai）；
+ * - Anthropic / Gemini：各家兼容接口文档里给的基础地址多半带前缀不带版本段
+ *   （如 https://api.deepseek.com/anthropic，由 SDK 补 /v1/messages），所以最后一段不是版本段时也补上。
+ *   已经写到 /messages、/models 的完整地址不补；Gemini 的 Vertex 地址（…/publishers/google）也不补。
  * 注意 URL 对象的 pathname 至少是 "/"，所以路径在字符串上算好再写回去。
  */
 function apiRootPath(type: EndpointType, url: URL): string {
-  let path = url.pathname.replace(/\/+$/, "");
+  const original = url.pathname.replace(/\/+$/, "");
+  let path = original;
   if (type === "gemini") {
     path = path.replace(/\/models(\/[^/]*)?$/, "");
   } else {
@@ -90,7 +99,13 @@ function apiRootPath(type: EndpointType, url: URL): string {
     if (path.endsWith(suffix)) path = path.slice(0, -suffix.length);
     path = path.replace(/\/models$/, "");
   }
-  return path === "" ? VERSION_PREFIX[type] : path;
+  if (path === "") return VERSION_PREFIX[type];
+  if (type === "openai-chat" || type === "openai-responses") return path;
+  // 写到了请求后缀或 /models：管理员给的就是完整地址
+  if (path !== original) return path;
+  if (type === "gemini" && /\/publishers(\/|$)/.test(path)) return path;
+  const last = path.slice(path.lastIndexOf("/") + 1);
+  return VERSION_SEGMENT.test(last) ? path : path + VERSION_PREFIX[type];
 }
 
 /** Gemini 的模型名允许写成 "models/gemini-2.5-pro" */
@@ -101,6 +116,7 @@ export function normalizeGeminiModel(model: string): string {
 /**
  * 实际的生成请求地址。
  * - 基础地址只有域名：补上版本段（OpenAI / Anthropic 是 /v1，Gemini 是 /v1beta）；
+ * - Anthropic / Gemini 的地址最后一段不是版本段时也补（规则见 apiRootPath）；
  * - 已经以请求后缀结尾（如 .../chat/completions）：原样使用；
  * - 其余情况：在后面接上请求后缀。
  * 基础地址里的查询参数会保留。
@@ -132,14 +148,29 @@ export function buildModelsUrl(type: EndpointType, baseUrl: string): string {
   return url.href;
 }
 
-/** 基础地址能不能被解析成 http(s) 地址；空串也算合法（用默认值） */
-export function isValidBaseUrl(baseUrl: string): boolean {
+/**
+ * 基础地址的问题，没有问题时返回 null；空串合法（用默认值）。
+ * 地址里带用户名密码（user:pass@host）不行：fetch 会拒绝，报错里还会带出密码。
+ */
+export function baseUrlIssue(baseUrl: string): string | null {
   const raw = baseUrl.trim();
-  if (raw === "") return true;
+  if (raw === "") return null;
+  let url: URL;
   try {
-    const url = new URL(raw);
-    return url.protocol === "http:" || url.protocol === "https:";
+    url = new URL(raw);
   } catch {
-    return false;
+    return "基础地址必须是 http:// 或 https:// 开头的有效地址";
   }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return "基础地址必须是 http:// 或 https:// 开头的有效地址";
+  }
+  if (url.username || url.password) {
+    return "基础地址里不能带用户名和密码，需要时请在额外请求头里加 Authorization: Basic …";
+  }
+  return null;
+}
+
+/** 基础地址能不能用（见 baseUrlIssue） */
+export function isValidBaseUrl(baseUrl: string): boolean {
+  return baseUrlIssue(baseUrl) === null;
 }

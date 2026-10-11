@@ -107,7 +107,7 @@ export interface BoardCheck {
   prompt: BoardPrompt;
   /** 最近一条记录（可能正在检测中）；从没检测过是 null */
   latest: ResultDetail | null;
-  /** 只在 latest 正在检测中时给出：最近一条已经结束的记录，没有就是 null */
+  /** 只在 latest 正在检测中时给出：最近一条已经结束的记录（优先跳过被服务停止 / 重启打断的），没有就是 null */
   previous: ResultDetail | null;
 }
 

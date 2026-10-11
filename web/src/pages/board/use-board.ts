@@ -35,8 +35,8 @@ const INITIAL: FeedState = {
 };
 
 /**
- * 定时拉取前台看板。平时 30 秒一次，有检测在进行时 3 秒一次；
- * 页面被切到后台时停下，切回来立刻刷新一次。连续失败时退避。
+ * 定时拉取前台看板。平时 30 秒一次，有检测在进行时 3 秒一次，
+ * 快到某个模型的下次检测时间时在到点后不久拉一次；页面被切到后台时停下，切回来立刻刷新一次。连续失败时退避。
  */
 export function useBoard(): BoardFeed {
   const [state, setState] = useState<FeedState>(INITIAL);
@@ -49,6 +49,7 @@ export function useBoard(): BoardFeed {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let inflight: Promise<void> | null = null;
     let lastData: BoardResponse | undefined;
+    let lastOffset = 0;
     let failures = 0;
 
     const hidden = () => document.visibilityState === "hidden";
@@ -56,7 +57,10 @@ export function useBoard(): BoardFeed {
     const schedule = () => {
       clearTimeout(timer);
       if (disposed || hidden()) return;
-      timer = setTimeout(() => void load(), nextPollDelay(lastData, failures));
+      timer = setTimeout(
+        () => void load(),
+        nextPollDelay(lastData, failures, Date.now() + lastOffset),
+      );
     };
 
     const load = (): Promise<void> => {
@@ -69,13 +73,14 @@ export function useBoard(): BoardFeed {
           if (disposed) return;
           const receivedAt = Date.now();
           lastData = data;
+          lastOffset = clockOffset(data.generatedAt, receivedAt);
           failures = 0;
           setState({
             data,
             error: undefined,
             failures: 0,
             updatedAt: receivedAt,
-            offset: clockOffset(data.generatedAt, receivedAt),
+            offset: lastOffset,
           });
         } catch (caught) {
           if (disposed) return;

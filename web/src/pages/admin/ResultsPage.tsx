@@ -33,7 +33,7 @@ import { RefreshIcon, TrashIcon } from "../../components/icons";
 import { StatusTag } from "../../components/output/StatusTag";
 import { formatDateTime, formatDuration, formatNumber } from "../../lib/format";
 import { useAsync } from "../../lib/use-async";
-import { useNow, usePolling } from "./model-hooks";
+import { useMediaQuery, useNow, usePolling } from "./model-hooks";
 import { modelLabel } from "./model-list";
 import { ResultDetailView } from "./result-detail";
 import {
@@ -43,11 +43,19 @@ import {
   pageCountOf,
   parseResultsQuery,
   resultsQueryToParams,
+  shouldScrollToTableTop,
   tokensText,
   withFilter,
   type ResultsQuery,
 } from "./result-query";
-import { AdminPage, ConfirmDialog, errorMessage } from "./ui";
+import {
+  AdminPage,
+  ConfirmDialog,
+  errorMessage,
+  STICKY_END_CELL,
+  STICKY_END_HEAD,
+  stickyEndHeadRef,
+} from "./ui";
 
 const RUNNING_POLL = 5_000;
 const COLUMN_COUNT = 9;
@@ -93,6 +101,8 @@ export function ResultsPage() {
   );
   const hasRunning = rows.some((row) => row.status === "running");
   usePolling(results.reload, hasRunning ? RUNNING_POLL : null);
+  // 手机上：操作列已经钉在右边，时间列再冻结就只剩一条缝看中间的列；状态筛选也换成下拉
+  const wide = useMediaQuery("(min-width: 40rem)");
 
   // 删光了最后一页（或者地址里的页码太大）：退到实际的最后一页。
   // 只看按当前条件取回的数据，否则新一页还没回来时会反复跳
@@ -170,10 +180,25 @@ export function ResultsPage() {
     query.promptId !== undefined ||
     query.status !== undefined;
 
+  const setStatus = (value: string) =>
+    setQuery(
+      withFilter(query, {
+        status: isResultStatus(value) ? value : undefined,
+      }),
+    );
+
   const goToPage = (page: number) => {
     setQuery({ ...query, page });
     const top = tableTopRef.current;
-    if (top && top.getBoundingClientRect().top < 0) {
+    if (!top) return;
+    // 滚回去时停在哪由 scroll-margin-top 决定（顶栏的高度也算在里面），判断看不看得见也用它
+    const margin = Number.parseFloat(getComputedStyle(top).scrollMarginTop);
+    if (
+      shouldScrollToTableTop(
+        top.getBoundingClientRect().top,
+        Number.isFinite(margin) ? margin : 0,
+      )
+    ) {
       top.scrollIntoView({ block: "start" });
     }
   };
@@ -242,7 +267,7 @@ export function ResultsPage() {
       <>
         <Table
           label="检测记录"
-          stickyFirstColumn
+          stickyFirstColumn={wide}
           aria-busy={stale || undefined}
           className={
             stale ? "opacity-60 transition-opacity" : "transition-opacity"
@@ -258,7 +283,13 @@ export function ResultsPage() {
               <TableHeaderCell numeric>首字</TableHeaderCell>
               <TableHeaderCell numeric>Tokens（入 / 出）</TableHeaderCell>
               <TableHeaderCell>触发</TableHeaderCell>
-              <TableHeaderCell align="end">操作</TableHeaderCell>
+              <TableHeaderCell
+                align="end"
+                className={STICKY_END_HEAD}
+                ref={stickyEndHeadRef}
+              >
+                操作
+              </TableHeaderCell>
             </TableRow>
           </TableHead>
           <TableBody>
@@ -298,6 +329,7 @@ export function ResultsPage() {
                 row={row}
                 expanded={expanded.has(row.id)}
                 onExpandedChange={(open) => setExpandedRow(row.id, open)}
+                onRerun={() => void results.reload()}
                 onDelete={() => {
                   setDeleteTarget(row);
                   setDeleteOpen(true);
@@ -377,30 +409,35 @@ export function ResultsPage() {
               }
             />
           </Field>
-          <Field label="状态" className="max-w-full">
-            <SegmentedControl
-              variant="outline"
-              value={query.status ?? "all"}
-              onValueChange={(value) =>
-                setQuery(
-                  withFilter(query, {
-                    status: isResultStatus(value) ? value : undefined,
-                  }),
-                )
-              }
-            >
-              {STATUS_FILTER_OPTIONS.map((option) => (
-                <Segment key={option.value} value={option.value}>
-                  {option.label}
-                </Segment>
-              ))}
-            </SegmentedControl>
+          <Field label="状态" className={wide ? "max-w-full" : "w-full"}>
+            {/* 五段在手机上放不下（"检测中"会被截成"检…"）：窄屏换成下拉 */}
+            {wide ? (
+              <SegmentedControl
+                variant="outline"
+                value={query.status ?? "all"}
+                onValueChange={setStatus}
+              >
+                {STATUS_FILTER_OPTIONS.map((option) => (
+                  <Segment key={option.value} value={option.value}>
+                    {option.label}
+                  </Segment>
+                ))}
+              </SegmentedControl>
+            ) : (
+              <Select
+                variant="outline"
+                items={STATUS_FILTER_OPTIONS}
+                value={query.status ?? "all"}
+                onValueChange={setStatus}
+              />
+            )}
           </Field>
         </div>
 
+        {/* 窄于 1280px 时页面顶上吸着 56px 的顶栏：翻页滚回来时停在它下面 */}
         <div
           ref={tableTopRef}
-          className="flex scroll-mt-4 flex-wrap items-center justify-between gap-x-4 gap-y-1"
+          className="flex scroll-mt-18 flex-wrap items-center justify-between gap-x-4 gap-y-1 xl:scroll-mt-4"
         >
           <p
             role="status"
@@ -472,6 +509,8 @@ interface ResultRowProps {
   row: AdminResultRow;
   expanded: boolean;
   onExpandedChange: (open: boolean) => void;
+  /** 在明细里点了"重新检测这一条"、已经排上之后 */
+  onRerun: () => void;
   onDelete: () => void;
 }
 
@@ -479,6 +518,7 @@ function ResultRow({
   row,
   expanded,
   onExpandedChange,
+  onRerun,
   onDelete,
 }: ResultRowProps) {
   const running = row.status === "running";
@@ -486,7 +526,7 @@ function ResultRow({
 
   return (
     <TableRow
-      detail={<ResultDetailView row={row} />}
+      detail={<ResultDetailView row={row} onRerun={onRerun} />}
       expanded={expanded}
       onExpandedChange={onExpandedChange}
     >
@@ -539,7 +579,7 @@ function ResultRow({
           <span className="text-ink-secondary">定时</span>
         )}
       </TableCell>
-      <TableCell align="end">
+      <TableCell align="end" className={STICKY_END_CELL}>
         {running ? (
           <IconButton size="sm" aria-label="检测中的记录不能删除" disabled>
             <TrashIcon size={16} />

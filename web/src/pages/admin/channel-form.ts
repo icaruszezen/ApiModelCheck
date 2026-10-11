@@ -2,6 +2,7 @@
  * 渠道表单的数据与校验：表单里的值都是字符串（输入框原样），提交前转成 ChannelInput。
  */
 import {
+  baseUrlIssue,
   buildRequestUrl,
   ENDPOINT_META,
   isValidBaseUrl,
@@ -145,15 +146,12 @@ export function parseExtraHeaders(text: string): HeadersParseResult {
   return { ok: true, value: Object.fromEntries(out) };
 }
 
-/** 基础地址的错误；空串合法（用默认地址） */
+/** 基础地址的错误；空串合法（用默认地址）。具体哪里不对与服务端同一套说法 */
 export function baseUrlError(baseUrl: string): string | undefined {
   if (baseUrl.trim().length > BASE_URL_MAX) {
     return `基础地址不能超过 ${BASE_URL_MAX} 个字符`;
   }
-  if (!isValidBaseUrl(baseUrl)) {
-    return "基础地址必须是 http:// 或 https:// 开头的有效地址";
-  }
-  return undefined;
+  return baseUrlIssue(baseUrl) ?? undefined;
 }
 
 /**

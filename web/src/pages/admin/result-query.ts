@@ -105,3 +105,14 @@ export function isLongText(
   }
   return false;
 }
+
+/**
+ * 翻页后要不要把表格上面那一行（记录数、刷新按钮）滚回来：它的上缘已经高过
+ * scroll-margin-top（窄于 1280px 时那里压着吸顶的顶栏），就是看不见或被顶栏挡住了
+ */
+export function shouldScrollToTableTop(
+  top: number,
+  scrollMarginTop: number,
+): boolean {
+  return top < scrollMarginTop;
+}

@@ -381,27 +381,107 @@ export interface SendOptions {
   signal: AbortSignal;
 }
 
-/** 发出请求；网络错误、非 2xx 都转成 ProviderError，中止时原样抛出中止错误 */
-export async function sendRequest(
-  url: string,
-  options: SendOptions,
-): Promise<Response> {
-  let response: Response;
+/**
+ * 重定向的目标，给人看：相对地址按请求地址补全，只留到路径
+ * （查询参数里可能有密钥之类，不往报错里写）。
+ */
+function redirectTarget(location: string | null, base: string): string {
+  if (!location) return "?";
+  try {
+    const target = new URL(location, base);
+    return `${target.origin}${target.pathname}`;
+  } catch {
+    return "?";
+  }
+}
+
+/** 同源的 307 / 308 最多跟几次 */
+export const MAX_SAME_ORIGIN_REDIRECTS = 3;
+
+/**
+ * 可以跟随的重定向：307 / 308（规定了方法和请求体不变）且目标和最初请求的地址同源，
+ * 返回目标地址；其他情况 null
+ */
+function followableRedirect(
+  status: number,
+  location: string | null,
+  current: string,
+  origin: string,
+): string | null {
+  if ((status !== 307 && status !== 308) || !location) return null;
+  try {
+    const target = new URL(location, current);
+    return target.origin === origin ? target.href : null;
+  } catch {
+    return null;
+  }
+}
+
+async function fetchOnce(url: string, options: SendOptions): Promise<Response> {
   try {
     const init = {
       method: options.method,
       headers: options.headers,
       body: options.body,
       signal: options.signal,
+      redirect: "manual",
       dispatcher: longLivedDispatcher(),
     };
-    response = await fetch(url, init as RequestInit);
+    return await fetch(url, init as RequestInit);
   } catch (err) {
     rethrowIfAborted(options.signal, err);
     throw networkError(err);
   }
-  if (!response.ok) throw await httpError(response, options.signal);
-  return response;
+}
+
+/**
+ * 发出请求；网络错误、非 2xx 都转成 ProviderError，中止时原样抛出中止错误。
+ * 重定向自己处理：同源的 307 / 308（比如 /chat/completions → /chat/completions/ 补斜杠）
+ * 用同样的方法、请求体和请求头重发，最多 MAX_SAME_ORIGIN_REDIRECTS 次。
+ * 其他的不跟随：fetch 跟随 301/302 时会把 POST 改成 GET、跨域时只去掉 Authorization，
+ * 结果是一个看不出原因的 405 / 401，而 x-api-key 之类的头还会被带到新地址。直接报出来让管理员改地址。
+ */
+export async function sendRequest(
+  url: string,
+  options: SendOptions,
+): Promise<Response> {
+  let origin: string;
+  try {
+    origin = new URL(url).origin;
+  } catch {
+    origin = "";
+  }
+  let current = url;
+  for (let hops = 0; ; hops++) {
+    const response = await fetchOnce(current, options);
+    if (response.status >= 300 && response.status < 400) {
+      response.body?.cancel().catch(() => {});
+      const location = response.headers.get("location");
+      const target = redirectTarget(location, current);
+      const next = followableRedirect(
+        response.status,
+        location,
+        current,
+        origin,
+      );
+      if (next === null) {
+        throw new ProviderError(
+          `上游返回了重定向（${response.status} → ${target}），请把基础地址改成重定向后的地址`,
+          response.status,
+        );
+      }
+      if (hops >= MAX_SAME_ORIGIN_REDIRECTS) {
+        throw new ProviderError(
+          `上游连续重定向超过 ${MAX_SAME_ORIGIN_REDIRECTS} 次（最后一次 ${response.status} → ${target}），请检查基础地址或上游配置`,
+          response.status,
+        );
+      }
+      current = next;
+      continue;
+    }
+    if (!response.ok) throw await httpError(response, options.signal);
+    return response;
+  }
 }
 
 /** 读完整个响应体（网络错误转成 ProviderError） */

@@ -12,6 +12,7 @@ import {
   PROJECT_ROOT,
   readEnvConfig,
   resolveSessionSecret,
+  weakPasswordWarning,
 } from "./config.ts";
 import { openDatabase } from "./db.ts";
 import { Repo } from "./repo.ts";
@@ -21,7 +22,9 @@ const SHUTDOWN_TIMEOUT_MS = 10_000;
 
 function main(): void {
   const env = readEnvConfig();
-  mkdirSync(env.dataDir, { recursive: true });
+  // 数据目录里有明文的 API 密钥和会话密钥：之后新建的目录和文件（含 SQLite 的 -wal / -shm）只给自己读写
+  process.umask(0o077);
+  mkdirSync(env.dataDir, { recursive: true, mode: 0o700 });
 
   const adminPassword = env.adminPassword ?? generatePassword();
   const sessionSecret = resolveSessionSecret(env.dataDir, env.sessionSecret);
@@ -74,6 +77,12 @@ function main(): void {
     );
     void shutdown(1);
   });
+
+  const weak = weakPasswordWarning(env.adminPassword);
+  if (weak) {
+    const line = "!".repeat(64);
+    console.warn(["", line, `  [警告] ${weak}`, line, ""].join("\n"));
+  }
 
   if (!env.adminPassword) {
     const line = "=".repeat(64);

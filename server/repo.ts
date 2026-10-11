@@ -40,6 +40,10 @@ export const IDLE_RUNTIME: RuntimeView = {
   getLive: () => undefined,
 };
 
+/** 服务停止 / 重启打断检测时记下的错误信息；前台的"上一次结果"会跳过这种记录 */
+export const STOPPED_MESSAGE = "服务已停止，检测中断";
+export const RESTART_MESSAGE = "服务重启，检测中断";
+
 export const DEFAULT_SETTINGS: Readonly<Settings> = {
   siteTitle: "模型智商检测",
   siteDescription: "定时向各家大模型发出同一组检测题，原样展示它们的回答。",
@@ -797,7 +801,8 @@ export class Repo {
     return this.#run("DELETE FROM models WHERE id = ?", id).changes > 0;
   }
 
-  setLastRunAt(modelId: number, iso: string): void {
+  /** iso 为 null 表示清空，模型在下一次检查时就到期 */
+  setLastRunAt(modelId: number, iso: string | null): void {
     this.#run("UPDATE models SET last_run_at = ? WHERE id = ?", iso, modelId);
   }
 
@@ -838,21 +843,20 @@ export class Repo {
     return { model, channel, prompts: this.listEnabledPromptsOfModel(modelId) };
   }
 
-  /** 前台能不能看到这个模型（模型和渠道都启用） */
-  isModelVisible(modelId: number): boolean {
+  /**
+   * 前台能不能看到这个"模型 × 提示词"的记录：模型、渠道、提示词都启用，
+   * 并且提示词仍分配给这个模型（和看板的条件一致）
+   */
+  isCheckVisible(modelId: number, promptId: number): boolean {
     return (
       this.#get(
-        `SELECT 1 AS ok FROM models m JOIN channels c ON c.id = m.channel_id
-         WHERE m.id = ? AND m.enabled = 1 AND c.enabled = 1`,
+        `SELECT 1 AS ok FROM model_prompts mp
+         JOIN models m ON m.id = mp.model_id
+         JOIN channels c ON c.id = m.channel_id
+         JOIN prompts p ON p.id = mp.prompt_id
+         WHERE mp.model_id = ? AND mp.prompt_id = ?
+           AND m.enabled = 1 AND c.enabled = 1 AND p.enabled = 1`,
         modelId,
-      ) !== undefined
-    );
-  }
-
-  isPromptVisible(promptId: number): boolean {
-    return (
-      this.#get(
-        "SELECT 1 AS ok FROM prompts WHERE id = ? AND enabled = 1",
         promptId,
       ) !== undefined
     );
@@ -919,13 +923,22 @@ export class Repo {
     ).changes;
   }
 
-  /** 把库里残留的 running 记录改成 error（服务启动时用）；返回改了几条 */
+  /**
+   * 把库里残留的 running 记录改成 error（服务启动时用）；返回改了几条。
+   * 这些模型的上次检测时间一并清空，启动后第一次检查就重新检测，不用等满一个间隔。
+   */
   recoverStaleRunning(message: string, now = new Date().toISOString()): number {
-    return this.#run(
-      "UPDATE results SET status = 'error', error = ?, finished_at = ? WHERE status = 'running'",
-      message,
-      now,
-    ).changes;
+    return transaction(this.db, () => {
+      this.#run(
+        `UPDATE models SET last_run_at = NULL
+         WHERE id IN (SELECT DISTINCT model_id FROM results WHERE status = 'running')`,
+      );
+      return this.#run(
+        "UPDATE results SET status = 'error', error = ?, finished_at = ? WHERE status = 'running'",
+        message,
+        now,
+      ).changes;
+    });
   }
 
   getResult(
@@ -1093,11 +1106,14 @@ export class Repo {
       const latest = latestByPair.get(`${row.model_id}:${row.id}`);
       let previous: ResultDetail | null = null;
       if (latest?.status === "running") {
+        // 优先取没被服务停止 / 重启打断的那条，免得重测时挡住上一次的正常结果
         const prev = this.#get<ResultRow>(
           `SELECT * FROM results WHERE model_id = ? AND prompt_id = ? AND status != 'running'
-           ORDER BY id DESC LIMIT 1`,
+           ORDER BY (status = 'error' AND error IN (?, ?)), id DESC LIMIT 1`,
           row.model_id,
           row.id,
+          STOPPED_MESSAGE,
+          RESTART_MESSAGE,
         );
         previous = prev ? toResultDetail(prev) : null;
       }

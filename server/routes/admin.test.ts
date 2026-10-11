@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { DatabaseSync } from "node:sqlite";
+import { gunzipSync } from "node:zlib";
 import type {
   AdminChannel,
   AdminModel,
@@ -361,42 +362,79 @@ describe("认证", () => {
     expect(blocked.data).toEqual({ error: "登录尝试过多，请 15 分钟后再试" });
   });
 
-  it("信任代理时按 X-Forwarded-For 的第一个地址分别限流", async () => {
+  it("同时发来的大量登录请求也最多比对 10 次密码", async () => {
+    const fresh = build();
+    // 请求头先到、请求体后到时，所有请求都会在任何一次失败被记下之前通过最前面的封禁检查
+    const statuses = await Promise.all(
+      Array.from({ length: 30 }, async (_, i) => {
+        const res = await fresh.request(`${BASE}/api/admin/login`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ username: "admin", password: `burst-${i}` }),
+        });
+        return res.status;
+      }),
+    );
+    expect(statuses.filter((s) => s === 401)).toHaveLength(10);
+    expect(statuses.filter((s) => s === 429)).toHaveLength(20);
+  });
+
+  it("信任代理时按 X-Forwarded-For 最右边（代理追加）的地址限流，左边伪造的不算", async () => {
     const fresh = build({ ...CONFIG, trustProxy: true });
-    for (let i = 0; i < 10; i++) {
-      await call(
+    const attempt = (xff: string, password = "bad") =>
+      call(
         "POST",
         "/api/admin/login",
-        { username: "admin", password: "bad" },
-        {
-          cookie: null,
-          target: fresh,
-          headers: { "X-Forwarded-For": "9.9.9.9, 10.0.0.1" },
-        },
+        { username: "admin", password },
+        { cookie: null, target: fresh, headers: { "X-Forwarded-For": xff } },
       );
+    // 每次换一个伪造的地址：Nginx 的 $proxy_add_x_forwarded_for 会把真实地址追加在最后
+    for (let i = 0; i < 10; i++) {
+      expect((await attempt(`10.0.${i}.1, 203.0.113.7`)).status).toBe(401);
     }
-    const blocked = await call(
-      "POST",
-      "/api/admin/login",
-      { username: "admin", password: CONFIG.adminPassword },
-      {
-        cookie: null,
-        target: fresh,
-        headers: { "X-Forwarded-For": "9.9.9.9" },
-      },
-    );
+    const blocked = await attempt("8.8.8.8, 203.0.113.7", CONFIG.adminPassword);
     expect(blocked.status).toBe(429);
-    const other = await call(
-      "POST",
-      "/api/admin/login",
-      { username: "admin", password: CONFIG.adminPassword },
-      {
-        cookie: null,
-        target: fresh,
-        headers: { "X-Forwarded-For": "8.8.8.8" },
-      },
+    expect((await attempt("203.0.113.7", CONFIG.adminPassword)).status).toBe(
+      429,
+    );
+    // 别的真实地址不受影响
+    const other = await attempt(
+      "203.0.113.7, 198.51.100.9",
+      CONFIG.adminPassword,
     );
     expect(other.status).toBe(200);
+  });
+
+  it("TRUST_PROXY=2 时取从右往左第二个；层数不够时退回连接地址", async () => {
+    const fresh = build({ ...CONFIG, trustProxy: 2 });
+    const attempt = (xff: string, password = "bad") =>
+      call(
+        "POST",
+        "/api/admin/login",
+        { username: "admin", password },
+        { cookie: null, target: fresh, headers: { "X-Forwarded-For": xff } },
+      );
+    for (let i = 0; i < 10; i++) {
+      await attempt(`spoof-${i}, 198.51.100.1, 10.0.0.${i}`);
+    }
+    expect(
+      (await attempt("198.51.100.1, 10.0.0.99", CONFIG.adminPassword)).status,
+    ).toBe(429);
+    expect(
+      (await attempt("198.51.100.2, 10.0.0.1", CONFIG.adminPassword)).status,
+    ).toBe(200);
+    // 只有一项时不够两层，按连接地址（测试里没有连接信息，是 "unknown"）计数
+    for (let i = 0; i < 10; i++) await attempt(`192.0.2.${i}`);
+    expect(
+      (
+        await call(
+          "POST",
+          "/api/admin/login",
+          { username: "admin", password: CONFIG.adminPassword },
+          { cookie: null, target: fresh },
+        )
+      ).status,
+    ).toBe(429);
   });
 
   it("登录成功后失败次数清零", async () => {
@@ -525,6 +563,118 @@ describe("防跨站请求", () => {
       headers: { Origin: "https://evil.example" },
     });
     expect(get.status).toBe(200);
+  });
+
+  it("反向代理改了 Host：浏览器标明同源就放行，只差端口也放行", async () => {
+    const proxied = build({ ...CONFIG, trustProxy: true });
+    const loginWith = (headers: Record<string, string>) =>
+      call(
+        "POST",
+        "/api/admin/login",
+        { username: "admin", password: CONFIG.adminPassword },
+        { cookie: null, target: proxied, headers },
+      );
+    // Nginx `proxy_set_header Host $host` 丢了外部端口
+    expect(
+      (
+        await loginWith({
+          Host: "iq.example.com",
+          Origin: "https://iq.example.com:8443",
+          "Sec-Fetch-Site": "same-origin",
+        })
+      ).status,
+    ).toBe(200);
+    // 只写了 proxy_pass：Host 是内部地址，也没有 X-Forwarded-Host
+    expect(
+      (
+        await loginWith({
+          Host: "127.0.0.1:3000",
+          Origin: "https://iq.example.com",
+          "Sec-Fetch-Site": "same-origin",
+        })
+      ).status,
+    ).toBe(200);
+    // 不带 Sec-Fetch-Site（旧浏览器）时只比较主机名，端口不同也算同一个站
+    expect(
+      (
+        await loginWith({
+          Host: "iq.example.com",
+          Origin: "https://iq.example.com:8443",
+        })
+      ).status,
+    ).toBe(200);
+  });
+
+  it("浏览器发了 Sec-Fetch-Site 时只认 same-origin：同一主机的其他端口（same-site）也拒绝", async () => {
+    const postPrompt = (title: string, headers: Record<string, string>) =>
+      call("POST", "/api/admin/prompts", { title, content: "x" }, { headers });
+    // 同一台机器另一个端口上的页面：Origin 主机名和 Host 一样，但浏览器标的是 same-site
+    const crossPort = await postPrompt("csrf", {
+      Host: "1.2.3.4:3000",
+      Origin: "http://1.2.3.4:8080",
+      "Sec-Fetch-Site": "same-site",
+    });
+    expect(crossPort.status).toBe(403);
+    expect(crossPort.data).toEqual({ error: "跨站请求被拒绝" });
+    // 浏览器标明不是同源时，不管 Origin 写的是什么、带没带都拒绝
+    const notSameOrigin: Record<string, string>[] = [
+      {
+        Host: "1.2.3.4:3000",
+        Origin: "http://1.2.3.4:3000",
+        "Sec-Fetch-Site": "same-site",
+      },
+      { Host: "1.2.3.4:3000", "Sec-Fetch-Site": "cross-site" },
+      { Host: "1.2.3.4:3000", "Sec-Fetch-Site": "none" },
+      { Host: "1.2.3.4:3000", "Sec-Fetch-Site": "" },
+    ];
+    for (const headers of notSameOrigin) {
+      const res = await call("DELETE", "/api/admin/results", undefined, {
+        headers,
+      });
+      expect(res.status, JSON.stringify(headers)).toBe(403);
+    }
+    expect(repo.listAdminPrompts()).toHaveLength(0);
+
+    const same = await postPrompt("ok", {
+      Host: "1.2.3.4:3000",
+      Origin: "http://1.2.3.4:3000",
+      "Sec-Fetch-Site": "same-origin",
+    });
+    expect(same.status).toBe(201);
+    // 不带 Sec-Fetch-Site（旧浏览器）时退回比较主机名，只差端口放行
+    const legacy = await postPrompt("legacy", {
+      Host: "1.2.3.4:3000",
+      Origin: "http://1.2.3.4:8080",
+    });
+    expect(legacy.status).toBe(201);
+    expect(repo.listAdminPrompts()).toHaveLength(2);
+  });
+
+  it("主机名不同的 Origin 仍然拒绝", async () => {
+    const proxied = build({ ...CONFIG, trustProxy: true });
+    const cases: Record<string, string>[] = [
+      { Host: "127.0.0.1:3000", Origin: "https://iq.example.com" },
+      {
+        Host: "iq.example.com",
+        Origin: "https://evil.example",
+        "Sec-Fetch-Site": "cross-site",
+      },
+      {
+        Host: "iq.example.com",
+        Origin: "https://evil.iq.example.com",
+        "Sec-Fetch-Site": "same-site",
+      },
+    ];
+    for (const headers of cases) {
+      const res = await call(
+        "POST",
+        "/api/admin/login",
+        { username: "admin", password: CONFIG.adminPassword },
+        { cookie: null, target: proxied, headers },
+      );
+      expect(res.status).toBe(403);
+      expect(res.data).toEqual({ error: "跨站请求被拒绝" });
+    }
   });
 });
 
@@ -1121,6 +1271,38 @@ describe("其他", () => {
     expect(res.status).toBe(404);
     expect(res.data).toEqual({ error: "接口不存在" });
     expect(res.res.headers.get("cache-control")).toBe("no-store");
+  });
+
+  it("客户端支持时压缩接口响应", async () => {
+    const channel = await createChannel();
+    const prompt = await call("POST", "/api/admin/prompts", {
+      title: "长提示词",
+      content: "很长的提示词".repeat(1000),
+      enabled: true,
+      sortOrder: 0,
+    });
+    await createModel(channel.id, {
+      promptIds: [(prompt.data as AdminPrompt).id],
+    });
+    const res = await app.request(`${BASE}/api/public/board`, {
+      headers: { "Accept-Encoding": "gzip, deflate, br" },
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("content-encoding")).toBe("gzip");
+    expect(res.headers.get("cache-control")).toBe("no-store");
+    const zipped = Buffer.from(await res.arrayBuffer());
+    const board = JSON.parse(gunzipSync(zipped).toString("utf8")) as {
+      generatedAt: string;
+    };
+    expect(JSON.stringify(board)).toContain("很长的提示词");
+    expect(zipped.length).toBeLessThan(2000);
+
+    const plain = await app.request(`${BASE}/api/public/board`);
+    expect(plain.headers.get("content-encoding")).toBeNull();
+    expect(await plain.json()).toEqual({
+      ...board,
+      generatedAt: expect.any(String),
+    });
   });
 
   it("请求体太大返回 413", async () => {

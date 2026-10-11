@@ -11,8 +11,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   generatePassword,
   PROJECT_ROOT,
+  proxyHops,
   readEnvConfig,
   resolveSessionSecret,
+  weakPasswordWarning,
 } from "./config.ts";
 
 const dirs: string[] = [];
@@ -37,7 +39,7 @@ describe("readEnvConfig", () => {
       adminUsername: "admin",
       adminPassword: null,
       sessionSecret: null,
-      trustProxy: false,
+      trustProxy: 0,
       schedulerTickSeconds: 15,
     });
   });
@@ -60,11 +62,22 @@ describe("readEnvConfig", () => {
       adminUsername: "boss",
       adminPassword: " p w ",
       sessionSecret: "secret",
-      trustProxy: true,
+      trustProxy: 1,
       schedulerTickSeconds: 5,
     });
-    expect(readEnvConfig({ TRUST_PROXY: "1" }).trustProxy).toBe(true);
-    expect(readEnvConfig({ TRUST_PROXY: "0" }).trustProxy).toBe(false);
+  });
+
+  it("TRUST_PROXY 是信任的代理层数", () => {
+    const hops = (value: string | undefined) =>
+      readEnvConfig({ TRUST_PROXY: value }).trustProxy;
+    for (const off of [undefined, "", "  ", "0", "false", "no", "off", "OFF"])
+      expect(hops(off)).toBe(0);
+    for (const one of ["1", "true", "yes", "on", " True "])
+      expect(hops(one)).toBe(1);
+    expect(hops("2")).toBe(2);
+    expect(hops("10")).toBe(10);
+    for (const bad of ["maybe", "-1", "1.5", "11", "0x2"])
+      expect(() => hops(bad)).toThrow(/TRUST_PROXY/);
   });
 
   it("数字不合法时报错", () => {
@@ -72,6 +85,52 @@ describe("readEnvConfig", () => {
     expect(() => readEnvConfig({ SCHEDULER_TICK_SECONDS: "0" })).toThrow(
       /SCHEDULER_TICK_SECONDS/,
     );
+  });
+});
+
+describe("proxyHops", () => {
+  it("布尔值当作 0 / 1 层，数字原样", () => {
+    expect(proxyHops(false)).toBe(0);
+    expect(proxyHops(true)).toBe(1);
+    expect(proxyHops(0)).toBe(0);
+    expect(proxyHops(3)).toBe(3);
+  });
+});
+
+describe("weakPasswordWarning", () => {
+  it("没设、或足够长时不提醒", () => {
+    expect(weakPasswordWarning(null)).toBeNull();
+    expect(weakPasswordWarning("abcdefgh")).toBeNull();
+    expect(weakPasswordWarning("一二三四五六七八")).toBeNull();
+  });
+
+  it("示例密码或少于 8 个字符时提醒", () => {
+    expect(weakPasswordWarning("change-me")).toMatch(/change-me/);
+    expect(weakPasswordWarning("abc1234")).toMatch(/7 个字符/);
+    expect(weakPasswordWarning("一二三")).toMatch(/3 个字符/);
+  });
+
+  it("文档里的占位密码和常见弱密码不分大小写都提醒，包括带引号、首尾空白的写法", () => {
+    for (const password of [
+      "change-me",
+      "Change-Me",
+      "CHANGEME",
+      "Password",
+      "ADMIN",
+      "123456",
+      "12345678",
+      "你自己的密码",
+      "换成你自己的密码",
+      "你的密码",
+      "'换成你自己的密码'",
+      '"change-me"',
+      "  password  ",
+    ]) {
+      expect(weakPasswordWarning(password), password).toMatch(/占位密码/);
+    }
+    // 只是包含这些词的长密码不算
+    expect(weakPasswordWarning("change-me-to-something-else")).toBeNull();
+    expect(weakPasswordWarning("换成你自己的密码吧2026")).toBeNull();
   });
 });
 

@@ -6,6 +6,8 @@ import {
   filterModels,
   modelLabel,
   promptStats,
+  runnablePrompts,
+  runToast,
 } from "./model-list";
 
 const NOW = "2026-10-11T00:00:00.000Z";
@@ -128,6 +130,31 @@ describe("promptStats", () => {
       assigned: 0,
       enabled: 0,
       disabled: 0,
+    });
+  });
+});
+
+describe("runnablePrompts", () => {
+  it("只要分配了且启用的，按提示词列表的顺序", () => {
+    const prompts = [prompt(3), prompt(1), prompt(2, false), prompt(4)];
+    expect(
+      runnablePrompts(model({ promptIds: [1, 2, 3, 9] }), prompts).map(
+        (item) => item.id,
+      ),
+    ).toEqual([3, 1]);
+  });
+
+  it("提示词列表还没载入时一条都没有", () => {
+    expect(runnablePrompts(model({ promptIds: [1] }), undefined)).toEqual([]);
+  });
+});
+
+describe("runToast", () => {
+  it("排上了是成功，正在检测时是提示", () => {
+    expect(runToast(true)).toEqual({ message: "已开始检测", tone: "success" });
+    expect(runToast(false)).toEqual({
+      message: "这个模型正在检测中",
+      tone: "info",
     });
   });
 });

@@ -7,13 +7,14 @@ import { ProviderError } from "./providers/types.ts";
 import { runCompletion } from "./providers/index.ts";
 import type { ResultTrigger } from "../shared/types.ts";
 import { LiveOutputs, type LiveOutput } from "./live.ts";
-import type {
-  ChannelRecord,
-  FinishedResult,
-  ModelRecord,
-  PromptRecord,
-  Repo,
-  RuntimeView,
+import {
+  STOPPED_MESSAGE,
+  type ChannelRecord,
+  type FinishedResult,
+  type ModelRecord,
+  type PromptRecord,
+  type Repo,
+  type RuntimeView,
 } from "./repo.ts";
 
 export type CompleteFn = (
@@ -53,7 +54,10 @@ export interface Scheduler extends RuntimeView {
   cancelPrompt(promptId: number): void;
   /** 队列为空且没有在跑的检测时 resolve */
   idle(): Promise<void>;
-  /** 停止定时器、清空队列、中止所有进行中的检测并记为 error，等它们都写完库 */
+  /**
+   * 停止定时器、清空队列、中止所有进行中的检测并记为 error，等它们都写完库；
+   * 被打断的模型清空上次检测时间，下次启动后马上重测
+   */
   stop(): Promise<void>;
 }
 
@@ -63,8 +67,7 @@ export type SchedulerControl = Pick<
   "trigger" | "cancelModel" | "cancelPrompt" | "isBusy" | "getLive"
 >;
 
-export const STOPPED_MESSAGE = "服务已停止，检测中断";
-export const RESTART_MESSAGE = "服务重启，检测中断";
+export { RESTART_MESSAGE, STOPPED_MESSAGE } from "./repo.ts";
 
 interface QueuedJob {
   modelId: number;
@@ -91,34 +94,117 @@ interface RunningJob {
 
 const MAX_TIMER_MS = 2_147_483_647;
 
+/** 基础地址路径里常见的、不算机密的段（小写）；v1、v1beta 这类版本号另外判断 */
+const GENERIC_PATH_SEGMENTS = new Set([
+  "api",
+  "openai",
+  "anthropic",
+  "gemini",
+  "google-ai-studio",
+  "chat",
+  "completions",
+  "responses",
+  "messages",
+  "models",
+  "compatible-mode",
+  "openapi",
+  "paas",
+  "beta",
+  "coding",
+  "inference",
+  "deployments",
+  "proxy",
+]);
+const VERSION_SEGMENT = /^v\d+(?:(?:alpha|beta)\d*)?$/i;
+
 /**
- * 把错误信息里的密钥、基础地址的主机名、额外请求头的值替换成 ***，免得在前台泄露。
+ * 把错误信息里的机密替换成 ***，免得在前台泄露：密钥、额外请求头的值，以及基础地址本身和
+ * 它的主机名、用户名密码、查询串、路径里不常见的段（中转站常把账号、令牌放在路径或 ?key= 里）。
  */
 export function scrubSecrets(
   text: string,
   channel: Pick<ChannelRecord, "apiKey" | "baseUrl" | "extraHeaders">,
 ): string {
-  const secrets: string[] = [];
-  if (channel.apiKey.length >= 6) secrets.push(channel.apiKey);
+  // length 只用来排序，source 是正则
+  const patterns: { length: number; source: string }[] = [];
+  const add = (secret: string, source = escapeRegExp(secret)) => {
+    if (secret) patterns.push({ length: secret.length, source });
+  };
+  if (channel.apiKey.length >= 6) add(channel.apiKey);
   for (const value of Object.values(channel.extraHeaders)) {
-    if (value.length >= 6) secrets.push(value);
+    if (value.length >= 6) add(value);
   }
   const raw = channel.baseUrl.trim();
-  if (raw) {
-    try {
-      const host = new URL(raw).hostname.replace(/^\[|\]$/g, "");
-      if (host) secrets.push(host);
-    } catch {
-      // 地址不合法就没有主机名可替换
+  let url: URL | null = null;
+  try {
+    url = raw ? new URL(raw) : null;
+  } catch {
+    // 地址不合法就没有可替换的
+  }
+  if (url) {
+    add(raw.replace(/\/+$/, ""));
+    add(url.href.replace(/\/+$/, ""));
+    const host = url.hostname.replace(/^\[|\]$/g, "");
+    if (host) add(host, hostPattern(host));
+    for (const part of [url.username, url.password]) {
+      for (const value of new Set([part, safeDecode(part)])) {
+        if (value.length >= 3) add(value, tokenPattern(value));
+      }
+    }
+    if (url.search.length > 1) {
+      add(url.search);
+      for (const pair of url.search.slice(1).split("&")) {
+        // 没有 = 的整段也算值
+        const value = pair.slice(pair.indexOf("=") + 1);
+        const decoded = safeDecode(value.replace(/\+/g, " "));
+        for (const v of new Set([value, decoded])) {
+          if (v.length >= 6) add(v, tokenPattern(v));
+        }
+      }
+    }
+    for (const segment of url.pathname.split("/")) {
+      for (const value of new Set([segment, safeDecode(segment)])) {
+        if (value.length < 3 || isGenericSegment(value)) continue;
+        add(value, tokenPattern(value));
+      }
     }
   }
   // 先替换长的，免得短的是长的一部分时留下残片
-  secrets.sort((a, b) => b.length - a.length);
+  patterns.sort((a, b) => b.length - a.length);
   let out = text;
-  for (const secret of secrets) {
-    out = out.replace(new RegExp(escapeRegExp(secret), "gi"), "***");
+  for (const { source } of patterns) {
+    out = out.replace(new RegExp(source, "gi"), "***");
   }
   return out;
+}
+
+function isGenericSegment(segment: string): boolean {
+  return (
+    GENERIC_PATH_SEGMENTS.has(segment.toLowerCase()) ||
+    VERSION_SEGMENT.test(segment)
+  );
+}
+
+/** 长的按子串替换；短的只替换前后不挨着字母数字的完整片段，免得把普通单词改坏 */
+function tokenPattern(token: string): string {
+  const escaped = escapeRegExp(token);
+  return token.length >= 8 ? escaped : `(?<![\\w-])${escaped}(?![\\w-])`;
+}
+
+function hostPattern(host: string): string {
+  const escaped = escapeRegExp(host);
+  if (/[.:]/.test(host)) return `(?<![\\w-])${escaped}(?![\\w-])`;
+  // 不带点的主机名（如 docker 里的服务名 api）常和普通单词重合，只替换地址里的：
+  // 跟在 // 或 @ 后面，或者后面紧跟 :端口 或 /
+  return `(?<=//|@)${escaped}(?![\\w-]|\\.[\\w-])|(?<![\\w.-])${escaped}(?=:\\d|/)`;
+}
+
+function safeDecode(text: string): string {
+  try {
+    return decodeURIComponent(text);
+  } catch {
+    return text;
+  }
 }
 
 function escapeRegExp(text: string): string {
@@ -467,11 +553,22 @@ export function createScheduler(options: SchedulerOptions): Scheduler {
     }
     queue.length = 0;
     const pending: Promise<void>[] = [];
+    // 因为停止而没跑完这一轮的模型
+    const interrupted: number[] = [];
     for (const state of running.values()) {
+      if (!state.cancelled) interrupted.push(state.modelId);
       abortJob(state, "stopped");
       pending.push(state.done);
     }
     await Promise.all(pending);
+    // 清空它们的上次检测时间：下次启动后第一次检查就重新检测，不用等满一个间隔
+    for (const modelId of interrupted) {
+      try {
+        repo.setLastRunAt(modelId, null);
+      } catch (err) {
+        logger.error(`清空模型 #${modelId} 的上次检测时间失败`, err);
+      }
+    }
     notifyIdle();
   }
 

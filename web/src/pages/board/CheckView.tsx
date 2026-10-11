@@ -6,13 +6,13 @@ import {
   Spinner,
   Tag,
 } from "@endfield-ui/react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import type {
   BoardCheck,
   BoardModel,
   ResultDetail,
 } from "../../../../shared/types.ts";
-import { publicApi } from "../../api/client";
+import { ApiRequestError, publicApi } from "../../api/client";
 import { OutputView } from "../../components/output/OutputView";
 import { StatusTag } from "../../components/output/StatusTag";
 import { formatDateTime, formatShortDateTime } from "../../lib/format";
@@ -21,21 +21,20 @@ import {
   describeNextRun,
   elapsedText,
   hasOutput,
+  latestVersion,
   nextRunText,
+  pickAfterRecheck,
   resolveCheckDisplay,
   resultMeta,
+  shouldRecheckPick,
   toSummary,
   type MetaItem,
+  type Picked,
+  type RecheckOutcome,
 } from "./board-logic";
 import { HistoryPicker } from "./HistoryPicker";
 import { useNow } from "./now";
 import { PromptBlock } from "./PromptBlock";
-
-/** 在"历史"里选中的那一次 */
-type Picked =
-  | { id: number; state: "loading" }
-  | { id: number; state: "ready"; result: ResultDetail }
-  | { id: number; state: "error"; message: string };
 
 function errorText(error: unknown): string {
   return error instanceof Error && error.message
@@ -48,27 +47,42 @@ export interface CheckViewProps {
   check: BoardCheck;
   /** 模型只有这一条检测题（没有页签）：题目标题写在提示词上面 */
   single: boolean;
+  /**
+   * 在"历史"里选中的那一次；看的是最新结果时是 null。由模型卡替各条题保管：
+   * 切到别的页签再切回来时选择还在，已经载入的结果也不用再拉一遍
+   */
+  picked: Picked | null;
+  onPickedChange: (picked: Picked | null) => void;
 }
 
 /** 一条检测题：提示词、检测信息、错误、输出，以及历史结果 */
-export function CheckView({ model, check, single }: CheckViewProps) {
+export function CheckView({
+  model,
+  check,
+  single,
+  picked,
+  onPickedChange: setPicked,
+}: CheckViewProps) {
   const latest = check.latest;
+  const version = latestVersion(latest);
   const display = resolveCheckDisplay(check);
-  const [pickedState, setPicked] = useState<Picked | null>(null);
-  // 记录被管理员清空后连"历史"下拉都没了，选中的那次也就作废，免得困在一条载不出来的结果上
-  const picked = latest ? pickedState : null;
 
   useEffect(() => {
     if (picked?.state !== "loading") return;
-    const { id } = picked;
+    const { id, seenLatest } = picked;
     let cancelled = false;
     publicApi.result(id).then(
       (result) => {
-        if (!cancelled) setPicked({ id, state: "ready", result });
+        if (!cancelled) setPicked({ id, seenLatest, state: "ready", result });
       },
       (error: unknown) => {
         if (!cancelled)
-          setPicked({ id, state: "error", message: errorText(error) });
+          setPicked({
+            id,
+            seenLatest,
+            state: "error",
+            message: errorText(error),
+          });
       },
     );
     return () => {
@@ -76,9 +90,37 @@ export function CheckView({ model, check, single }: CheckViewProps) {
     };
   }, [picked]);
 
+  // 最近一次换了（或者刚结束）时，确认选中的那次还在：清空记录后紧接着又检测了一次、
+  // 或者旧记录被保留条数挤掉时，它已经被删了，不能还停在上面。
+  // 只在版本变了、而且选着历史时才问一次，刷新本身不会带出请求
+  useEffect(() => {
+    if (!picked || version === null || !shouldRecheckPick(picked, version))
+      return;
+    const current = picked;
+    let cancelled = false;
+    const settle = (outcome: RecheckOutcome) => {
+      if (cancelled) return;
+      const next = pickAfterRecheck(current, version, outcome);
+      if (next !== current) setPicked(next);
+    };
+    publicApi.result(current.id).then(
+      (result) => settle({ kind: "found", result }),
+      (error: unknown) =>
+        settle(
+          error instanceof ApiRequestError && error.status === 404
+            ? { kind: "gone" }
+            : { kind: "failed" },
+        ),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [picked, version]);
+
   const pick = (id: number | null) => {
     if (id === null || id === latest?.id) setPicked(null);
-    else if (picked?.id !== id) setPicked({ id, state: "loading" });
+    else if (picked?.id !== id)
+      setPicked({ id, seenLatest: version, state: "loading" });
   };
 
   // 提示词跟着正在看的那次结果走：管理员改过题时，显示当时用的版本
@@ -110,7 +152,13 @@ export function CheckView({ model, check, single }: CheckViewProps) {
               variant="text"
               size="sm"
               iconEnd={null}
-              onClick={() => setPicked({ id: picked.id, state: "loading" })}
+              onClick={() =>
+                setPicked({
+                  id: picked.id,
+                  seenLatest: version,
+                  state: "loading",
+                })
+              }
             >
               重试
             </Button>
@@ -171,7 +219,7 @@ export function CheckView({ model, check, single }: CheckViewProps) {
               modelId={model.id}
               promptId={check.prompt.id}
               latestId={latest.id}
-              latestKey={`${latest.id}:${latest.status}`}
+              latestKey={version ?? ""}
               selectedId={picked?.id ?? null}
               selected={
                 picked?.state === "ready" ? toSummary(picked.result) : null
