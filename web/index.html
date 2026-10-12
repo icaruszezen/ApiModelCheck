@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>模型智商检测</title>
+    <script>
+      // 首屏之前把主题写好，避免先闪一下亮色（选择记在 localStorage 的 ef-theme 里，见 useTheme）
+      (function () {
+        try {
+          var pref = localStorage.getItem("ef-theme");
+          var dark =
+            pref === "dark" ||
+            ((pref === null || pref === "system") &&
+              window.matchMedia("(prefers-color-scheme: dark)").matches);
+          document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+        } catch (e) {}
+      })();
+    </script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,27 @@
+# 启动前先在本目录建 .env 文件写上后台密码，比如随机生成一个（cat 看一眼记下来）：
+#   echo "ADMIN_PASSWORD=$(openssl rand -base64 18)" > .env && cat .env
+# 想自己定密码就编辑 .env（格式见 .env.example），密码里有 $ 时用单引号括起来。
+# 没设置时 docker compose 会直接报错退出，不会用一个人人都知道的默认密码跑起来
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+      # 放在反向代理后面时换成下面这行（只映射到本机），外网只能经过代理访问
+      # - "127.0.0.1:3000:3000"
+    environment:
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请在 .env 文件或环境变量里设置 ADMIN_PASSWORD}
+      # 放在反向代理后面时打开，值是代理层数（见 README）。打开时必须同时把上面的端口映射改成
+      # "127.0.0.1:3000:3000"：Docker 映射的端口会绕过 ufw 之类的主机防火墙，外网能直连 3000 端口的话，
+      # 别人可以伪造 X-Forwarded-For 绕过登录限流
+      # TRUST_PROXY: "1"
+      # 上游要走代理时打开下面两行
+      # NODE_USE_ENV_PROXY: "1"
+      # HTTPS_PROXY: http://host.docker.internal:7890
+    volumes:
+      - amc-data:/app/data
+    restart: unless-stopped
+
+volumes:
+  amc-data:
