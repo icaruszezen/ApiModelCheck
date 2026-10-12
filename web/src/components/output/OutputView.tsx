@@ -1,5 +1,5 @@
 import { cn, Spinner } from "@endfield-ui/react";
-import { useMemo } from "react";
+import { useLayoutEffect, useMemo, useRef, type ReactNode } from "react";
 import { parseOutput, type OutputSegment } from "../../../../shared/output-parse.ts";
 import { formatNumber } from "../../lib/format";
 import { CodeBlock } from "./CodeBlock";
@@ -17,8 +17,16 @@ export interface OutputViewProps {
   running?: boolean;
   /** 输出为空时显示的文字，默认"（没有输出）" */
   emptyText?: string;
+  /**
+   * 紧凑版（前台卡片里用）：网页的小方框矮一些，正文放进一个限高、可以滚动的区域，
+   * 生成中自动跟到最新的内容
+   */
+  compact?: boolean;
   className?: string;
 }
+
+/** 紧凑版网页小方框的高度 */
+const COMPACT_HTML_HEIGHT = 260;
 
 /**
  * 展示一次检测的模型输出：文字原样显示（不渲染 Markdown），代码块等宽显示，
@@ -29,6 +37,7 @@ export function OutputView({
   reasoning = "",
   running = false,
   emptyText = "（没有输出）",
+  compact = false,
   className,
 }: OutputViewProps) {
   const parsed = useMemo(() => parseOutput(output, { running }), [output, running]);
@@ -67,23 +76,28 @@ export function OutputView({
 
       {showReasoning && <ReasoningBlock text={allReasoning} thinking={thinking} />}
 
-      {segments.map((segment, position) => {
-        const key = `${position}-${segment.kind}`;
-        if (segment.kind === "html") {
-          htmlIndex += 1;
-          return (
-            <HtmlPreview
-              key={key}
-              html={segment.html}
-              source={segment.source}
-              complete={segment.complete}
-              running={running}
-              index={htmlCount > 1 ? htmlIndex : undefined}
-            />
-          );
-        }
-        return <SegmentView key={key} segment={segment} running={running} />;
-      })}
+      {hasBody && (
+        <BodyArea compact={compact} running={running} output={output}>
+          {segments.map((segment, position) => {
+            const key = `${position}-${segment.kind}`;
+            if (segment.kind === "html") {
+              htmlIndex += 1;
+              return (
+                <HtmlPreview
+                  key={key}
+                  html={segment.html}
+                  source={segment.source}
+                  complete={segment.complete}
+                  running={running}
+                  index={htmlCount > 1 ? htmlIndex : undefined}
+                  height={compact ? COMPACT_HTML_HEIGHT : undefined}
+                />
+              );
+            }
+            return <SegmentView key={key} segment={segment} running={running} />;
+          })}
+        </BodyArea>
+      )}
 
       {!hasBody && !thinking && <p className="text-sm text-ink-tertiary">{emptyText}</p>}
 
@@ -93,6 +107,48 @@ export function OutputView({
           正在生成…
         </p>
       )}
+    </div>
+  );
+}
+
+/**
+ * 正文各段。紧凑版限高、可以滚动；生成中只要滚动条停在底部，就跟着新内容往下走，
+ * 往上翻看时不打扰
+ */
+function BodyArea({
+  compact,
+  running,
+  output,
+  children,
+}: {
+  compact: boolean;
+  running: boolean;
+  output: string;
+  children: ReactNode;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+  const stick = useRef(true);
+
+  useLayoutEffect(() => {
+    const node = ref.current;
+    if (!compact || !running || !node || !stick.current) return;
+    node.scrollTop = node.scrollHeight;
+  }, [compact, running, output]);
+
+  if (!compact) return <>{children}</>;
+  return (
+    <div
+      ref={ref}
+      tabIndex={0}
+      role="region"
+      aria-label="模型输出"
+      onScroll={(event) => {
+        const node = event.currentTarget;
+        stick.current = node.scrollTop + node.clientHeight >= node.scrollHeight - 24;
+      }}
+      className="grid max-h-[26rem] min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-3 overflow-y-auto overscroll-contain text-sm leading-relaxed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+    >
+      {children}
     </div>
   );
 }

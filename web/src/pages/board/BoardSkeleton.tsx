@@ -1,6 +1,6 @@
 import { Skeleton } from "@endfield-ui/react";
 
-/** 首次加载时的骨架：只画页头、统计和两个渠道的大块 */
+/** 首次加载时的骨架：只画页头、统计和两个渠道，每个渠道一行模型卡 */
 export function BoardSkeleton() {
   return (
     <div aria-busy="true" className="flex flex-col gap-12">
@@ -23,7 +23,16 @@ export function BoardSkeleton() {
             <Skeleton className="h-8 w-40" />
             <Skeleton className="h-7 w-56 max-w-full" />
           </div>
-          <Skeleton className="h-96" />
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {Array.from({ length: 3 }, (_, card) => (
+              <Skeleton
+                key={card}
+                className={
+                  ["h-96", "hidden h-96 md:block", "hidden h-96 xl:block"][card]
+                }
+              />
+            ))}
+          </div>
         </div>
       ))}
     </div>

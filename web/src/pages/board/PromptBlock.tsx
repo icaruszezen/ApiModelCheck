@@ -8,10 +8,17 @@ export interface PromptBlockProps {
   snapshot: string | null;
   /** 只有一条检测题、没有页签时，把题目标题写在这里 */
   title?: string;
+  /** 紧凑版（前台卡片里用）：收起时只留 3 行 */
+  compact?: boolean;
 }
 
-/** 提示词原样显示；超过 6 行默认收起，可以展开 */
-export function PromptBlock({ content, snapshot, title }: PromptBlockProps) {
+/** 提示词原样显示；超过 6 行（紧凑版 3 行）默认收起，可以展开 */
+export function PromptBlock({
+  content,
+  snapshot,
+  title,
+  compact = false,
+}: PromptBlockProps) {
   const [showCurrent, setShowCurrent] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [overflowing, setOverflowing] = useState(false);
@@ -21,7 +28,7 @@ export function PromptBlock({ content, snapshot, title }: PromptBlockProps) {
   const outdated = snapshot !== null;
   const text = outdated && !showCurrent ? snapshot : content;
 
-  // 收起时量一下有没有被截断：按实际折行算，比数换行符准（长段落在窄屏上也会超过 6 行）
+  // 收起时量一下有没有被截断：按实际折行算，比数换行符准（长段落在窄卡片里也会超过行数）
   useLayoutEffect(() => {
     const node = textRef.current;
     if (!node || expanded) return;
@@ -67,7 +74,7 @@ export function PromptBlock({ content, snapshot, title }: PromptBlockProps) {
           id={textId}
           className={cn(
             "text-sm leading-relaxed break-words whitespace-pre-wrap text-ink",
-            !expanded && "line-clamp-6",
+            !expanded && (compact ? "line-clamp-3" : "line-clamp-6"),
           )}
         >
           {text}

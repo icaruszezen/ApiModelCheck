@@ -14,7 +14,7 @@ import { CopyButton } from "./CopyButton";
 import { SandboxFrame } from "./SandboxFrame";
 import { buildSrcDoc, byteLength, formatBytes, tailLines, type HtmlSource } from "./srcdoc";
 
-/** 小方框的高度 */
+/** 小方框默认的高度 */
 const BOX_HEIGHT = 360;
 /** 生成中显示源码的最后多少行 */
 const TAIL_LINES = 40;
@@ -30,6 +30,8 @@ export interface HtmlPreviewProps {
   running?: boolean;
   /** 同一段输出里有多个网页时的序号（从 1 起），用在标题里 */
   index?: number;
+  /** 小方框的高度（px），默认 360；前台的卡片里矮一些 */
+  height?: number;
   className?: string;
 }
 
@@ -45,6 +47,7 @@ export function HtmlPreview({
   complete,
   running = false,
   index,
+  height = BOX_HEIGHT,
   className,
 }: HtmlPreviewProps) {
   const [view, setView] = useState<View>("preview");
@@ -116,15 +119,15 @@ export function HtmlPreview({
       )}
 
       {generating ? (
-        <GeneratingTail html={html} />
+        <GeneratingTail html={html} height={height} />
       ) : view === "preview" ? (
-        <SandboxFrame key={runId} srcDoc={srcDoc} title={title} height={BOX_HEIGHT} />
+        <SandboxFrame key={runId} srcDoc={srcDoc} title={title} height={height} />
       ) : (
         <pre
           tabIndex={0}
           aria-label="网页源码"
           className="overflow-auto bg-surface-sunken p-3 font-mono text-xs leading-relaxed text-ink focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus"
-          style={{ height: BOX_HEIGHT }}
+          style={{ height }}
         >
           <code>{html}</code>
         </pre>
@@ -138,13 +141,13 @@ export function HtmlPreview({
 }
 
 /** 生成中：源码的最后几十行贴底显示，上沿淡出 */
-function GeneratingTail({ html }: { html: string }) {
+function GeneratingTail({ html, height }: { html: string; height: number }) {
   const tail = tailLines(html, TAIL_LINES);
   return (
     <div className="flex flex-col">
       <div
         className="relative flex flex-col justify-end overflow-hidden bg-surface-sunken"
-        style={{ height: BOX_HEIGHT - 40 }}
+        style={{ height: height - 40 }}
       >
         <pre className="shrink-0 px-3 py-2 font-mono text-xs leading-relaxed break-all whitespace-pre-wrap text-ink-secondary">
           {tail.text}

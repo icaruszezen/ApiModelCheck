@@ -85,7 +85,7 @@ export function BoardPage() {
             </>
           }
         />
-        <main className="mx-auto w-full max-w-7xl flex-1 px-4 pt-8 pb-16 sm:px-6 sm:pt-10 lg:px-8">
+        <main className="mx-auto w-full max-w-[105rem] flex-1 px-4 pt-8 pb-16 sm:px-6 sm:pt-10 lg:px-8">
           {content}
         </main>
       </div>
@@ -119,8 +119,8 @@ function BoardView({ board }: { board: BoardResponse }) {
           description="管理员配置好渠道和模型之后，各个模型的检测结果会显示在这里。"
         />
       ) : (
-        <div className="mt-14 flex items-start gap-10">
-          <div className="flex min-w-0 flex-1 flex-col gap-16">
+        <div className="mt-12 flex items-start gap-8">
+          <div className="flex min-w-0 flex-1 flex-col gap-12">
             {board.channels.map((channel, index) => (
               <ChannelSection
                 key={channel.id}
@@ -129,11 +129,14 @@ function BoardView({ board }: { board: BoardResponse }) {
               />
             ))}
           </div>
-          {/* 宽屏才有这一列；吸顶的顶栏高 56px，目录和各节的锚点都让出它 */}
+          {/*
+            很宽的屏幕才有这一列，窄一些时把宽度让给一行三张的模型卡；
+            吸顶的顶栏高 56px，目录和各节的锚点都让出它
+          */}
           <Toc
             title="// 本页"
             offset={80}
-            className="sticky top-20 hidden max-h-[calc(100dvh-7rem)] w-52 shrink-0 overflow-y-auto lg:block"
+            className="sticky top-20 hidden max-h-[calc(100dvh-7rem)] w-48 shrink-0 overflow-y-auto 2xl:block"
           >
             {toc.map((entry) => (
               <TocItem key={entry.href} href={entry.href} level={entry.level}>
@@ -169,7 +172,7 @@ function ChannelSection({
   return (
     <section
       id={channelAnchor(channel.id)}
-      className="flex min-w-0 scroll-mt-20 flex-col gap-6"
+      className="flex min-w-0 scroll-mt-20 flex-col gap-5"
     >
       {/* 英文层写的是端点类型，不是渠道名的翻译，所以要让读屏读出来 */}
       <SectionTitle
@@ -187,9 +190,12 @@ function ChannelSection({
           description="管理员添加模型之后，检测结果会显示在这里。"
         />
       ) : (
-        channel.models.map((model) => (
-          <ModelCard key={model.id} model={model} />
-        ))
+        // 宽屏一行三张，平板两张，手机一张
+        <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
+          {channel.models.map((model) => (
+            <ModelCard key={model.id} model={model} />
+          ))}
+        </div>
       )}
     </section>
   );

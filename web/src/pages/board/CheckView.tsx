@@ -202,11 +202,12 @@ export function CheckView({
   }
 
   return (
-    <div className="flex min-w-0 flex-col gap-6 p-4">
+    <div className="flex min-w-0 flex-col gap-4 p-3">
       <PromptBlock
         content={check.prompt.content}
         snapshot={changedSnapshot(check.prompt.content, shown)}
         title={single ? check.prompt.title : undefined}
+        compact
       />
       <section className="flex min-w-0 flex-col gap-3">
         <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
@@ -264,6 +265,7 @@ function ResultBody({ result }: { result: ResultDetail }) {
           output={result.output}
           reasoning={result.reasoning}
           running={running}
+          compact
         />
       )}
     </div>
@@ -290,7 +292,7 @@ function ElapsedEntry({ startedAt }: { startedAt: string }) {
 function ResultMeta({ result }: { result: ResultDetail }) {
   const [first, ...rest] = resultMeta(result);
   return (
-    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
       <div className="flex items-center gap-1.5">
         <StatusTag status={result.status} />
         {result.trigger === "manual" && (
@@ -299,7 +301,7 @@ function ResultMeta({ result }: { result: ResultDetail }) {
           </Tag>
         )}
       </div>
-      <dl className="flex min-w-0 flex-wrap items-baseline gap-x-4 gap-y-1 text-xs">
+      <dl className="flex min-w-0 flex-wrap items-baseline gap-x-3 gap-y-1 text-xs">
         {first && <MetaEntry label={first.label} value={first.value} />}
         {result.status === "running" && (
           <ElapsedEntry startedAt={result.startedAt} />

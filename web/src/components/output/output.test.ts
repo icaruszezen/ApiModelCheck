@@ -248,6 +248,20 @@ describe("OutputView", () => {
     expect(markup).toContain("1 个网页");
   });
 
+  it("紧凑版：正文放进可以滚动的区域，网页的小方框矮一些", () => {
+    const output = '前言\n\n```html\n<div id="x">卡片</div>\n```';
+    const normal = render(createElement(OutputView, { output }));
+    const compact = render(createElement(OutputView, { output, compact: true }));
+    expect(normal).not.toContain('aria-label="模型输出"');
+    expect(attr(iframes(normal)[0]!, "style")).toContain("height:360px");
+    expect(compact).toContain('role="region" aria-label="模型输出"');
+    expect(attr(iframes(compact)[0]!, "style")).toContain("height:260px");
+    // 没有正文时不画空的滚动区域
+    expect(render(createElement(OutputView, { output: "", compact: true }))).not.toContain(
+      'aria-label="模型输出"',
+    );
+  });
+
   it("代码块显示语言和代码", () => {
     const markup = render(createElement(OutputView, { output: "```python\nprint('<b>')\n```" }));
     expect(iframes(markup)).toHaveLength(0);

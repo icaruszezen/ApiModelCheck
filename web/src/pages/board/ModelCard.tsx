@@ -95,7 +95,7 @@ export function ModelCard({ model }: { model: BoardModel }) {
                 <span className="inline-flex items-center gap-2">
                   <StatusMark status={mark} />
                   <span
-                    className="max-w-48 truncate"
+                    className="max-w-32 truncate"
                     title={check.prompt.title}
                   >
                     {check.prompt.title}
@@ -119,10 +119,10 @@ export function ModelCard({ model }: { model: BoardModel }) {
 
   return (
     <Panel id={modelAnchor(model.id)} className="min-w-0 scroll-mt-20">
-      <header className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3 border-b border-line px-4 py-3.5">
-        <div className="flex min-w-0 flex-1 basis-64 flex-col gap-2">
-          <h3 className="flex flex-wrap items-baseline gap-x-2.5 gap-y-0.5">
-            <span className="text-lg leading-snug font-bold wrap-anywhere">
+      <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 border-b border-line px-3 py-3">
+        <div className="flex min-w-0 flex-1 basis-56 flex-col gap-2">
+          <h3 className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+            <span className="text-base leading-snug font-bold wrap-anywhere">
               {title}
             </span>
             {modelId && (
