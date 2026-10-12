@@ -4,7 +4,13 @@
 # 没设置时 docker compose 会直接报错退出，不会用一个人人都知道的默认密码跑起来
 services:
   app:
-    build: .
+    # GitHub Actions 自动构建的镜像，跟着 main 分支更新。更新到最新：
+    #   docker compose pull && docker compose up -d
+    # 要固定在某个版本，把 latest 换成版本号（如 1.2.0）或 sha-<提交号>。
+    # fork 之后用自己仓库构建的镜像时，把 icaruszezen/apimodelcheck 换成自己的（全小写）。
+    image: ghcr.io/icaruszezen/apimodelcheck:latest
+    # 想从源码自己构建时，删掉上面的 image，换成下面这行，再用 docker compose up -d --build 启动
+    # build: .
     ports:
       - "3000:3000"
       # 放在反向代理后面时换成下面这行（只映射到本机），外网只能经过代理访问

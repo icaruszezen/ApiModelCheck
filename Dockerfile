@@ -1,5 +1,6 @@
-# 第一阶段：装全部依赖，构建前端
-FROM node:22-alpine AS build
+# 第一阶段：装全部依赖，构建前端。产物是纯静态文件，和目标平台无关，
+# 所以总在构建机本身的平台上跑：构建 arm64 镜像时这一步不用走 QEMU 模拟，快得多
+FROM --platform=$BUILDPLATFORM node:22-alpine AS build
 WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci
