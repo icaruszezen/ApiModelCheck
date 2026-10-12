@@ -4,3 +4,6 @@ data
 .git
 .env
 *.log
+.github
+docs
+.vitest

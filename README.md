@@ -31,15 +31,28 @@
 
 ### Docker（推荐）
 
+每次推到 main，GitHub Actions 会自动构建镜像并推送到 `ghcr.io/icaruszezen/apimodelcheck`（amd64 和 arm64 都有），服务器上只要 `docker-compose.yml` 一个文件，不用下载源码：
+
 ```bash
-git clone https://github.com/icaruszezen/ApiModelCheck.git
-cd ApiModelCheck
+mkdir apimodelcheck && cd apimodelcheck
+curl -fsSLO https://raw.githubusercontent.com/icaruszezen/ApiModelCheck/main/docker-compose.yml
 echo "ADMIN_PASSWORD=$(openssl rand -base64 18)" > .env   # 随机生成一个后台密码
 cat .env                                                  # 记下这个密码
-docker compose up -d --build
+docker compose up -d
 ```
 
-打开 `http://服务器地址:3000` 是前台，`http://服务器地址:3000/admin` 是后台。数据（SQLite 数据库）存在名为 `amc-data` 的卷里。
+打开 `http://服务器地址:3000` 是前台，`http://服务器地址:3000/admin` 是后台。
+
+更新到最新版本：
+
+```bash
+docker compose pull && docker compose up -d
+```
+
+- **数据**：SQLite 数据库和登录会话密钥存在名为 `amc-data` 的卷里，重启、`docker compose down` 再 `up`、更新镜像都不会丢；只有 `docker compose down -v` 或者 `docker volume rm` 删掉这个卷才会丢。不用 compose、直接 `docker run` 时记得加 `-v amc-data:/app/data`。
+- **镜像标签**：`latest` 跟着 main 分支；推一个 `v1.2.3` 这样的标签会另外生成 `1.2.3` 和 `1.2`；每次构建还有一个 `sha-<提交号>`。想固定版本就把 `docker-compose.yml` 里的 `latest` 换掉。
+- **自己构建**：把 `docker-compose.yml` 里的 `image:` 一行换成 `build: .`，在源码目录里运行 `docker compose up -d --build`。fork 之后用自己仓库构建的镜像时，把镜像名换成 `ghcr.io/你的用户名/仓库名`（全小写）。
+- **镜像拉不下来**（提示 `unauthorized` 或 `denied`）：GitHub 上新建的镜像默认是私有的。到仓库主页右侧的 Packages 里打开这个镜像，在 Package settings 里把可见性改成 Public；或者在服务器上用有 `read:packages` 权限的令牌 `docker login ghcr.io`。
 
 想用自己的密码就直接编辑 `.env`，写成 `ADMIN_PASSWORD=你的密码`；密码里有 `$` 时用单引号括起来。没有设置 `ADMIN_PASSWORD` 时 `docker compose` 会直接报错，不会用一个大家都知道的默认密码启动。compose 只从 `.env` 里取 `ADMIN_PASSWORD`；要放在反向代理后面时，取消 `docker-compose.yml` 里 `TRUST_PROXY` 那一行的注释，并把端口映射改成 `127.0.0.1:3000:3000`，让外网只能经过代理访问。
 
@@ -160,6 +173,7 @@ web/           前端：React + Vite + @endfield-ui/react
   src/pages/model/   模型详情页（历史记录）
   src/pages/admin/   管理后台（单独打包，访客不会下载）
   src/components/output/   模型输出的展示：文字、代码块、HTML 沙箱预览、思考过程
+.github/workflows/   自动构建并推送 Docker 镜像
 ```
 
 ## 许可
