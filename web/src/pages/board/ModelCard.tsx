@@ -23,7 +23,7 @@ import {
 import { CheckView } from "./CheckView";
 import { META_CLIP, META_ITEM, META_ROW } from "./meta-line";
 import { useNow } from "./now";
-import { PromptTabs, TAB_LIST, tabClass } from "./PromptTabs";
+import { PromptTabs, TAB_ROWS, tabClass } from "./PromptTabs";
 import { StatusMark } from "./StatusMark";
 
 /**
@@ -47,7 +47,7 @@ export function ModelCard({ model }: { model: BoardModel }) {
   let body: ReactNode;
   if (!firstCheck) {
     body = (
-      <p className="px-5 py-10 text-center text-sm text-ink-tertiary">
+      <p className="px-5 py-10 text-center text-sm text-ink-secondary">
         这个模型还没有分配检测题。
       </p>
     );
@@ -55,7 +55,7 @@ export function ModelCard({ model }: { model: BoardModel }) {
     // 只有一道题：没有页签，题目标题照选中的页签画在同一个位置
     body = (
       <>
-        <div className={cn(TAB_LIST, "mx-5")}>
+        <div className={cn(TAB_ROWS, "mx-5")}>
           <p className={cn(tabClass(true), "max-w-full")}>
             <CheckLabel check={firstCheck} />
           </p>
@@ -104,7 +104,7 @@ export function ModelCard({ model }: { model: BoardModel }) {
           <ModelProblems model={model} />
         </div>
         <div className={META_CLIP}>
-          <dl className={cn(META_ROW, "text-xs leading-5 text-ink-tertiary")}>
+          <dl className={cn(META_ROW, "text-xs leading-5 text-ink-secondary")}>
             {modelId && (
               <div className={cn(META_ITEM, "min-w-0")}>
                 <dt className="sr-only">模型 ID</dt>
@@ -218,10 +218,10 @@ function ModelSchedule({ model }: { model: BoardModel }) {
   const at = "at" in info ? info.at : null;
   // 窄卡片（手机）上只写多久以后，具体时间悬停看，底部始终是一行
   return (
-    <p className="min-w-0 text-xs text-ink-tertiary">
+    <p className="min-w-0 text-xs text-ink-secondary">
       下次检测：
       <span
-        className="text-ink-secondary"
+        className="text-ink"
         title={at ? formatDateTime(at) : undefined}
       >
         {nextRunText(info)}

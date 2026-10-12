@@ -52,8 +52,11 @@ export function PromptBlock({
       <button
         type="button"
         onClick={() => setShowCurrent((value) => !value)}
-        // 小字里的链接按钮：点按区域往四周放大一圈，手机上好点
-        className="relative ml-1 text-ink underline underline-offset-2 after:absolute after:-inset-x-1 after:-inset-y-2.5 after:content-[''] hover:text-ink-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+        className={cn(
+          "ml-1 text-ink underline underline-offset-2 hover:text-ink-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus",
+          // 卡片里的小字链接：点按区域往四周放大一圈，手机上好点
+          compact && "relative after:absolute after:-inset-x-1 after:-inset-y-2.5 after:content-['']",
+        )}
       >
         {showCurrent ? "看检测时的版本" : "看现在的版本"}
       </button>
@@ -92,7 +95,7 @@ export function PromptBlock({
               aria-expanded={expanded}
               aria-controls={textId}
               onClick={() => setExpanded((value) => !value)}
-              className="mt-0.5 inline-flex min-h-8 items-center gap-1 text-xs text-ink-tertiary transition-colors duration-(--duration-fast) ease-standard hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+              className="mt-0.5 inline-flex min-h-8 items-center gap-1 text-xs text-ink-secondary transition-colors duration-(--duration-fast) ease-standard hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
             >
               {expanded ? "收起" : "展开全部"}
               {chevron(12)}

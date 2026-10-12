@@ -53,8 +53,10 @@ export function CodeBlock({
         tabIndex={0}
         aria-label={`${lang || "代码"}代码`}
         className={cn(
-          "overflow-auto font-mono leading-relaxed text-ink focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus",
+          "overflow-auto font-mono text-ink focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus",
           compact ? "max-h-64 p-2.5 text-xs" : "max-h-128 p-3 text-sm",
+          // 行高写在字号后面：cn 合并时字号类会顶掉排在它前面的行高
+          "leading-relaxed",
         )}
       >
         <code>{code}</code>

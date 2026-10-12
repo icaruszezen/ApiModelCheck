@@ -74,9 +74,9 @@ export function ReasoningBlock({
               touched.current = true;
               setOpen((value) => !value);
             }}
-            className="group inline-flex min-h-8 items-center gap-1.5 text-ink-tertiary transition-colors duration-(--duration-fast) ease-standard hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+            className="group inline-flex min-h-8 items-center gap-1.5 text-ink-secondary transition-colors duration-(--duration-fast) ease-standard hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
           >
-            <span className="font-medium text-ink-secondary group-hover:text-ink">思考过程</span>
+            <span className="font-medium text-ink">思考过程</span>
             {thinking ? (
               <>
                 <Spinner size="sm" label={null} className="size-2.5" />

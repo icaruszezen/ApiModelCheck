@@ -15,13 +15,18 @@ export interface PromptTabsProps {
   /** 页签栏的可访问名称 */
   label: string;
   items: readonly PromptTabItem[];
-  /** 页签栏外层（左右内边距、下面的细线在这里） */
+  /** 页签栏外层（左右内边距） */
   listClassName?: string;
   panelClassName?: string;
 }
 
-/** 页签栏外层：下面一条细线 */
-export const TAB_LIST = "border-b border-line";
+/**
+ * 页签所在的行：每一行底下一条细线（页签固定 h-10，线画在每 2.5rem 的最后 1px）。
+ * 页签折成两行时选中的墨线也落在它那一行的细线上，不悬在两行中间。
+ * 高对比模式下背景图可能被去掉，再补一条底边线
+ */
+export const TAB_ROWS =
+  "bg-[repeating-linear-gradient(to_bottom,transparent_0_calc(2.5rem_-_1px),var(--color-line)_calc(2.5rem_-_1px)_2.5rem)] forced-colors:border-b forced-colors:border-[CanvasText]";
 
 /**
  * 一个页签的样子。只有一道题时卡片上没有页签，题目标题照选中的页签画，同一排卡片对得齐。
@@ -90,13 +95,13 @@ export function PromptTabs({
 
   return (
     <>
-      <div className={cn(TAB_LIST, listClassName)}>
+      <div className={listClassName}>
         <div
           role="tablist"
           aria-label={label}
           aria-orientation="horizontal"
           onKeyDown={handleKeyDown}
-          className="flex flex-wrap gap-x-5"
+          className={cn("flex flex-wrap gap-x-5", TAB_ROWS)}
         >
           {items.map((item) => {
             const selected = item.value === value;
@@ -113,7 +118,7 @@ export function PromptTabs({
                 className={cn(
                   tabClass(selected),
                   "max-w-full transition-colors duration-(--duration-fast) ease-standard",
-                  "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus",
+                  "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus",
                 )}
               >
                 {item.tab}
@@ -134,7 +139,8 @@ export function PromptTabs({
             tabIndex={0}
             className={cn(
               "focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus",
-              selected && switched && "animate-fade-in",
+              // 和组件库的 TabPanel 一样用短的那一档时长
+              selected && switched && "animate-fade-in [animation-duration:var(--duration-fast)]",
               panelClassName,
             )}
           >

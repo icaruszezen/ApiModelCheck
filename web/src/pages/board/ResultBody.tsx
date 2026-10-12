@@ -8,6 +8,7 @@ import {
   Tag,
 } from "@endfield-ui/react";
 import type { ReactNode } from "react";
+import { NORMAL_FINISH_REASONS } from "../../../../shared/endpoints.ts";
 import type {
   BoardModel,
   ResultDetail,
@@ -112,11 +113,11 @@ function NeverChecked({
   if (compact) {
     return (
       <div className="flex flex-col gap-1 py-4">
-        <p className="flex items-center gap-2 text-sm font-medium text-ink-secondary">
+        <p className="flex items-center gap-2 text-sm font-medium">
           {model.running && <Spinner size="sm" label={null} className="size-2.5" />}
           {title}
         </p>
-        <p className="text-xs text-ink-tertiary">{description}</p>
+        <p className="text-xs text-ink-secondary">{description}</p>
       </div>
     );
   }
@@ -297,10 +298,10 @@ function CompactEntry({
           full
         )}
       </dt>
-      <dd className="min-w-0 font-tech text-ink-secondary wrap-anywhere tabular-nums">
+      <dd className="min-w-0 font-tech text-ink wrap-anywhere tabular-nums">
         {children}
         {suffix && (
-          <span aria-hidden="true" className="ml-1 font-sans text-ink-tertiary">
+          <span aria-hidden="true" className="ml-1 font-sans">
             {suffix}
           </span>
         )}
@@ -311,13 +312,13 @@ function CompactEntry({
 
 /**
  * 卡片里结果的信息行：状态、多久以前检测的、耗时、首字延迟、tokens 排成一行，顺序固定，
- * 同一排卡片里同一项落在差不多的位置。结束原因是 stop（正常结束）时不写
+ * 同一排卡片里同一项落在差不多的位置。正常答完（stop、end_turn 之类）时不写结束原因
  */
 function CompactMeta({ result }: { result: ResultDetail }) {
   const [first, ...rest] = resultMeta(result);
   return (
     <div className={META_CLIP}>
-      <dl className={cn(META_ROW, "gap-y-0.5 text-xs leading-5 text-ink-tertiary")}>
+      <dl className={cn(META_ROW, "gap-y-0.5 text-xs leading-5 text-ink-secondary")}>
         <div
           data-status={result.status}
           className={cn(
@@ -368,7 +369,7 @@ function CompactMeta({ result }: { result: ResultDetail }) {
                 </CompactEntry>
               );
             case "finish":
-              return item.value === "stop" ? null : (
+              return NORMAL_FINISH_REASONS.has(item.value) ? null : (
                 <CompactEntry key={item.key} label={item.label}>
                   {item.value}
                 </CompactEntry>
@@ -446,7 +447,7 @@ function CompactNotice({
       <span className="max-h-28 min-w-0 overflow-y-auto break-words">
         <span className="sr-only">{failed ? "检测失败：" : "检测超时："}</span>
         <span className={tone}>{sentence(reason)}</span>
-        <span className="text-ink-tertiary">
+        <span className="text-ink-secondary">
           {failed ? "下面是出错前收到的部分输出。" : "下面是超时前收到的部分输出。"}
         </span>
       </span>

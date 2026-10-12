@@ -83,14 +83,36 @@ export function HtmlPreview({
             : "min-h-10 flex-wrap gap-x-3 gap-y-1 bg-surface-sunken py-1 pr-1 pl-3",
         )}
       >
-        <span className="flex min-w-0 items-center gap-1.5 truncate text-xs text-ink-secondary">
-          <span className="font-medium text-ink">HTML 网页</span>
-          <span aria-hidden="true">·</span>
-          <span className="font-tech tabular-nums">{size}</span>
+        <span
+          className={cn(
+            "flex min-w-0 items-center gap-1.5 text-xs text-ink-secondary",
+            // 紧凑版工具条只有一行：放不下时大小那一截省略掉，标题不截断；
+            // 卡片很窄（320px 宽的手机）时不写大小，标题只写"网页"
+            compact && "overflow-hidden whitespace-nowrap",
+          )}
+        >
+          {compact ? (
+            <span className="shrink-0 font-medium text-ink">
+              <span className="hidden @xs:inline">HTML </span>网页
+            </span>
+          ) : (
+            <span className="font-medium text-ink">HTML 网页</span>
+          )}
+          <span aria-hidden="true" className={compact ? "hidden @xs:inline" : undefined}>
+            ·
+          </span>
+          <span
+            className={cn(
+              "min-w-0 truncate font-tech tabular-nums",
+              compact && "hidden @xs:inline",
+            )}
+          >
+            {size}
+          </span>
           {generating && (
             <>
               <span aria-hidden="true">·</span>
-              <Spinner size="sm" label={null} />
+              <Spinner size="sm" label={null} className={compact ? "size-2.5 shrink-0" : undefined} />
               <span>生成中</span>
             </>
           )}
@@ -221,8 +243,13 @@ function GeneratingTail({
           )}
         />
       </div>
-      <p className="flex items-center gap-2 border-t border-line px-3 py-2 text-sm text-ink-secondary">
-        <Spinner size="sm" label={null} />
+      <p
+        className={cn(
+          "flex items-center gap-2 border-t border-line text-ink-secondary",
+          compact ? "px-2.5 py-1.5 text-xs" : "px-3 py-2 text-sm",
+        )}
+      >
+        <Spinner size="sm" label={null} className={compact ? "size-2.5" : undefined} />
         网页生成中，写完后自动预览
       </p>
     </div>

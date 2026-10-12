@@ -169,8 +169,9 @@ function BodyArea({
           stick.current = node.scrollTop + node.clientHeight >= node.scrollHeight - 24;
           setMore(node.scrollTop + node.clientHeight < node.scrollHeight - 2);
         }}
-        // 一行几张时限高 20rem，同一排不被某一张撑得太高；手机上一行一张，可以高一些
-        className="max-h-[26rem] min-w-0 overflow-y-auto overscroll-contain text-base leading-relaxed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus md:max-h-[20rem]"
+        // 一行几张时限高 23rem，同一排不被某一张撑得太高，又放得下网页小方框加一两行开场白；
+        // 手机上一行一张，可以高一些
+        className="max-h-[26rem] min-w-0 overflow-y-auto overscroll-contain text-base leading-relaxed focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus md:max-h-[23rem]"
       >
         <div ref={innerRef} className="grid min-w-0 grid-cols-[minmax(0,1fr)] content-start gap-3">
           {children}

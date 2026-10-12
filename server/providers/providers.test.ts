@@ -1,6 +1,6 @@
 import net from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ENDPOINT_TYPES } from "../../shared/endpoints.ts";
+import { ENDPOINT_META, ENDPOINT_TYPES } from "../../shared/endpoints.ts";
 import type { EndpointType } from "../../shared/endpoints.ts";
 import {
   MOCK_GEMINI_EMBEDDING_MODEL,
@@ -20,12 +20,8 @@ import type {
 const KEY = "sk-test-0123456789";
 const PROMPT =
   "9.11 和 9.9 哪个大？请先给出结论，再用一两句话解释。\n这句话是为了让提示词超过四十个字，好检查引用时的截断。";
-const FINISH: Record<EndpointType, string> = {
-  "openai-chat": "stop",
-  "openai-responses": "completed",
-  anthropic: "end_turn",
-  gemini: "STOP",
-};
+// 正常答完时存下的结束原因；前台卡片靠 ENDPOINT_META 里记的这个值认出"正常结束"、不写出来
+const FINISH = (type: EndpointType) => ENDPOINT_META[type].normalFinish;
 
 let mock: MockUpstream;
 let open: MockUpstream; // 不校验密钥的实例，用来看"没有密钥"时的请求头
@@ -128,7 +124,7 @@ describe.each(ENDPOINT_TYPES)("%s", (type) => {
       expect(result.outputTokens).toBe(
         countMockTokens(expected.output) + countMockTokens(expected.reasoning),
       );
-      expect(result.finishReason).toBe(FINISH[type]);
+      expect(result.finishReason).toBe(FINISH(type));
       if (stream) {
         // 按约 12 字一段切开发送，增量拼起来要和最终结果一致
         expect(deltas.length).toBeGreaterThan(3);
@@ -245,7 +241,7 @@ describe.each(ENDPOINT_TYPES)("%s", (type) => {
     expect(result.output).toBe(
       mockReply(type, "mock-alwaysstream", PROMPT).output,
     );
-    expect(result.finishReason).toBe(FINISH[type]);
+    expect(result.finishReason).toBe(FINISH(type));
     expect(deltas).toEqual([]);
   });
 

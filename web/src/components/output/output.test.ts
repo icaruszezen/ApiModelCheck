@@ -2,6 +2,7 @@ import { ToastProvider } from "@endfield-ui/react";
 import { createElement, type ReactElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
+import { CodeBlock } from "./CodeBlock";
 import { HtmlPreview } from "./HtmlPreview";
 import { OutputView } from "./OutputView";
 import { SandboxFrame } from "./SandboxFrame";
@@ -415,6 +416,16 @@ describe("StatusTag", () => {
       const markup = renderToStaticMarkup(createElement(StatusTag, { status }));
       expect(markup).toContain(STATUS_LABELS[status]);
       expect(markup).toContain(`data-status="${status}"`);
+    }
+  });
+});
+
+describe("CodeBlock", () => {
+  it("代码的行高两种版本都是 relaxed（cn 合并时不被字号类顶掉）", () => {
+    for (const compact of [false, true]) {
+      const markup = render(createElement(CodeBlock, { code: "print(1)", lang: "python", compact }));
+      const pre = /<pre\b[^>]*>/.exec(markup)?.[0] ?? "";
+      expect(attr(pre, "class")?.split(" ")).toContain("leading-relaxed");
     }
   });
 });
