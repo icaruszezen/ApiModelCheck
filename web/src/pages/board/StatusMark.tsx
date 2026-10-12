@@ -14,11 +14,13 @@ const shape: Record<Exclude<ResultStatus, "running">, string> = {
 export interface StatusMarkProps {
   /** 最近一条记录的状态；从没检测过是 null */
   status: ResultStatus | null;
+  /** 紧凑版（首页卡片里）：检测中的转圈缩到和另外几种记号差不多大，小字里不那么抢眼 */
+  compact?: boolean;
   className?: string;
 }
 
 /** 页签上的小状态记号。纯装饰：状态的文字由使用方另外给读屏 */
-export function StatusMark({ status, className }: StatusMarkProps) {
+export function StatusMark({ status, compact = false, className }: StatusMarkProps) {
   return (
     <span
       aria-hidden="true"
@@ -28,7 +30,7 @@ export function StatusMark({ status, className }: StatusMarkProps) {
       )}
     >
       {status === "running" ? (
-        <Spinner size="sm" label={null} />
+        <Spinner size="sm" label={null} className={compact ? "size-2" : undefined} />
       ) : status === null ? (
         <span className="size-2 border border-line-strong" />
       ) : (
