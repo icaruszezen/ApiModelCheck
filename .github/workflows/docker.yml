@@ -46,6 +46,8 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE }}
+          # 默认推版本标签时也会顺手改 latest；关掉，latest 只由下面第一条规则（main 分支）给
+          flavor: latest=false
           tags: |
             type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
