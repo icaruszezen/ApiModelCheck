@@ -111,9 +111,12 @@ export interface BoardCheck {
   previous: ResultDetail | null;
 }
 
-/** GET /api/public/history?modelId=&promptId=&limit= */
+/** GET /api/public/history?modelId=&promptId=&limit=&before= */
 export interface HistoryResponse {
+  /** 按 id 倒序（新的在前）；传了 before 时只含 id 比它小的 */
   items: ResultSummary[];
+  /** 这一页后面还有更早的记录 */
+  hasMore: boolean;
 }
 
 /* ------------------------------------------------------------------ */

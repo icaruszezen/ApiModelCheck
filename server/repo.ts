@@ -949,10 +949,12 @@ export class Repo {
     return row ? toResultDetail(row, runtime.getLive(row.id)) : undefined;
   }
 
+  /** 某个"模型 × 提示词"的记录，按 id 倒序；传了 before 就只要比它更早（id 更小）的 */
   listHistory(
     modelId: number,
     promptId: number,
     limit: number,
+    before?: number,
   ): ResultSummary[] {
     return this.#all<{
       id: number;
@@ -963,9 +965,10 @@ export class Repo {
       trigger: string;
     }>(
       `SELECT id, status, started_at, finished_at, duration_ms, trigger FROM results
-       WHERE model_id = ? AND prompt_id = ? ORDER BY id DESC LIMIT ?`,
+       WHERE model_id = ? AND prompt_id = ? AND id < ? ORDER BY id DESC LIMIT ?`,
       modelId,
       promptId,
+      before ?? Number.MAX_SAFE_INTEGER,
       limit,
     ).map((row) => ({
       id: row.id,

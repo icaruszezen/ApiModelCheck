@@ -4,7 +4,6 @@ import type {
   BoardModel,
   BoardResponse,
   ResultDetail,
-  ResultSummary,
 } from "../../../../shared/types.ts";
 import { formatDateTime } from "../../lib/format";
 import {
@@ -13,7 +12,6 @@ import {
   POLL_IDLE_MS,
   POLL_MAX_BACKOFF_MS,
   POLL_RETRY_MS,
-  buildHistoryOptions,
   changedSnapshot,
   checkMark,
   clockOffset,
@@ -22,23 +20,18 @@ import {
   elapsedText,
   formatClock,
   hasOutput,
-  historyLabel,
   isBoardActive,
   latestVersion,
   modelHeading,
+  modelPath,
   nextPollDelay,
   nextRunText,
-  pickAfterRecheck,
   pickTab,
-  prunePicks,
   relativeParts,
   resolveCheckDisplay,
   resultMeta,
   runningCheck,
-  shouldRecheckPick,
-  toSummary,
   tocEntries,
-  type Picked,
 } from "./board-logic";
 
 const NOW = Date.parse("2026-10-11T12:00:00.000Z");
@@ -537,63 +530,6 @@ describe("elapsedText / hasOutput / changedSnapshot", () => {
   });
 });
 
-describe("history", () => {
-  const summary = (
-    id: number,
-    overrides: Partial<ResultSummary> = {},
-  ): ResultSummary => ({
-    id,
-    status: "success",
-    startedAt: iso(-id * MIN),
-    finishedAt: null,
-    durationMs: null,
-    trigger: "schedule",
-    ...overrides,
-  });
-
-  it("标签是时间 + 状态，手动触发的另外标出", () => {
-    const item = summary(3, { status: "timeout", trigger: "manual" });
-    expect(historyLabel(item)).toBe(
-      `${formatDateTime(item.startedAt)} · 超时 · 手动`,
-    );
-    expect(historyLabel(summary(4))).toBe(
-      `${formatDateTime(summary(4).startedAt)} · 成功`,
-    );
-  });
-
-  it("按 id 倒序，最新的一条加标注", () => {
-    const options = buildHistoryOptions(
-      [summary(5), summary(9), summary(7)],
-      9,
-      null,
-    );
-    expect(options.map((option) => option.value)).toEqual(["9", "7", "5"]);
-    expect(options[0]!.label.endsWith("（最新）")).toBe(true);
-    expect(options[1]!.label.endsWith("（最新）")).toBe(false);
-  });
-
-  it("正在看的那条不在列表里时补进去，在的话不重复", () => {
-    const viewing = summary(2, { status: "error" });
-    const options = buildHistoryOptions([summary(9), summary(8)], 9, viewing);
-    expect(options.map((option) => option.value)).toEqual(["9", "8", "2"]);
-    expect(
-      buildHistoryOptions([summary(9), summary(2)], 9, viewing),
-    ).toHaveLength(2);
-  });
-
-  it("从完整记录摘出历史行", () => {
-    const r = result({ id: 77, status: "timeout", trigger: "manual" });
-    expect(toSummary(r)).toEqual({
-      id: 77,
-      status: "timeout",
-      startedAt: r.startedAt,
-      finishedAt: r.finishedAt,
-      durationMs: r.durationMs,
-      trigger: "manual",
-    });
-  });
-});
-
 describe("latestVersion", () => {
   it("id + 状态；从没检测过是 null", () => {
     expect(latestVersion({ id: 70, status: "running" })).toBe("70:running");
@@ -603,112 +539,10 @@ describe("latestVersion", () => {
   });
 });
 
-describe("shouldRecheckPick", () => {
-  const ready = (seenLatest: string | null): Picked => ({
-    id: 68,
-    seenLatest,
-    state: "ready",
-    result: result({ id: 68 }),
-  });
-
-  it("最近一次没变时不问：刷新本身不带出请求", () => {
-    expect(shouldRecheckPick(ready("69:success"), "69:success")).toBe(false);
-  });
-
-  it("出了新结果、或者检测刚结束时要问", () => {
-    expect(shouldRecheckPick(ready("69:success"), "70:running")).toBe(true);
-    // 保留条数满了的时候，旧记录在检测结束的那一刻被删
-    expect(shouldRecheckPick(ready("70:running"), "70:success")).toBe(true);
-    expect(
-      shouldRecheckPick(
-        { id: 68, seenLatest: "69:success", state: "error", message: "x" },
-        "70:success",
-      ),
-    ).toBe(true);
-  });
-
-  it("没选、正在载入、没有最近一次时不问", () => {
-    expect(shouldRecheckPick(null, "70:success")).toBe(false);
-    expect(
-      shouldRecheckPick(
-        { id: 68, seenLatest: "69:success", state: "loading" },
-        "70:success",
-      ),
-    ).toBe(false);
-    // 记录清空了：交给 prunePicks
-    expect(shouldRecheckPick(ready("69:success"), null)).toBe(false);
-  });
-});
-
-describe("pickAfterRecheck", () => {
-  const old = result({ id: 68 });
-  const ready: Picked = {
-    id: 68,
-    seenLatest: "69:success",
-    state: "ready",
-    result: old,
-  };
-
-  it("被删了（清空后紧接着又检测了一次）：作废，回到最新", () => {
-    expect(pickAfterRecheck(ready, "70:running", { kind: "gone" })).toBeNull();
-  });
-
-  it("还在：记下这次的版本，不再重复问；结果对象不换", () => {
-    const fresh = result({ id: 68 });
-    const next = pickAfterRecheck(ready, "70:running", {
-      kind: "found",
-      result: fresh,
-    });
-    expect(next).toEqual({ ...ready, seenLatest: "70:running" });
-    expect(next?.state === "ready" && next.result).toBe(old);
-    expect(next && shouldRecheckPick(next, "70:running")).toBe(false);
-  });
-
-  it("之前载入失败的，确认时拿到了就直接显示", () => {
-    const fresh = result({ id: 68 });
-    expect(
-      pickAfterRecheck(
-        { id: 68, seenLatest: "69:success", state: "error", message: "x" },
-        "70:success",
-        { kind: "found", result: fresh },
-      ),
-    ).toEqual({
-      id: 68,
-      seenLatest: "70:success",
-      state: "ready",
-      result: fresh,
-    });
-  });
-
-  it("没问成时原样返回同一个对象，不反复重试", () => {
-    expect(pickAfterRecheck(ready, "70:running", { kind: "failed" })).toBe(
-      ready,
-    );
-  });
-});
-
-describe("prunePicks", () => {
-  it("检测题都在、都有记录时原样返回同一个对象", () => {
-    const picks = { 4: "a", 7: "b" };
-    expect(prunePicks(picks, [check(4, result()), check(7, result())])).toBe(
-      picks,
-    );
-    const empty = {};
-    expect(prunePicks(empty, [])).toBe(empty);
-  });
-
-  it("去掉记录被清空的那条：新结果来了也不再冒出来", () => {
-    const picks = { 4: "a", 7: "b" };
-    expect(prunePicks(picks, [check(4, null), check(7, result())])).toEqual({
-      7: "b",
-    });
-  });
-
-  it("去掉已经不在这个模型上的检测题", () => {
-    const picks = { 4: "a", 7: "b" };
-    const next = prunePicks(picks, [check(7, result())]);
-    expect(next).toEqual({ 7: "b" });
-    expect(picks).toEqual({ 4: "a", 7: "b" });
+describe("modelPath", () => {
+  it("模型详情页的地址，带上提示词就直接打开那道题", () => {
+    expect(modelPath(3)).toBe("/models/3");
+    expect(modelPath(3, 12)).toBe("/models/3?prompt=12");
   });
 });
 

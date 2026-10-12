@@ -1,5 +1,5 @@
 /**
- * 前台检测页的纯逻辑：刷新节奏、统计数字、每条检测题此刻该显示什么。
+ * 前台检测页和模型详情页共用的纯逻辑：刷新节奏、统计数字、每条检测题此刻该显示什么。
  * 不碰 DOM 和 React，单独测试。
  */
 import type {
@@ -8,7 +8,6 @@ import type {
   BoardResponse,
   ResultDetail,
   ResultStatus,
-  ResultSummary,
 } from "../../../../shared/types.ts";
 import {
   formatDateTime,
@@ -366,56 +365,6 @@ export function changedSnapshot(
     : result.promptSnapshot;
 }
 
-/* ------------------------------------------------------------------ */
-/* 历史                                                                */
-/* ------------------------------------------------------------------ */
-
-export function historyLabel(
-  item: Pick<ResultSummary, "startedAt" | "status" | "trigger">,
-): string {
-  const parts = [formatDateTime(item.startedAt), STATUS_LABEL[item.status]];
-  if (item.trigger === "manual") parts.push("手动");
-  return parts.join(" · ");
-}
-
-export interface HistoryOption {
-  value: string;
-  label: string;
-}
-
-/**
- * 历史下拉的选项，按 id 倒序。正在看的那一条不在列表里（被新记录挤出了最近 20 条）时补进去，
- * 下拉框里才写得出它是哪一次。
- */
-export function buildHistoryOptions(
-  items: readonly ResultSummary[],
-  latestId: number | null,
-  viewing: ResultSummary | null,
-): HistoryOption[] {
-  const rows = [...items];
-  if (viewing && !rows.some((row) => row.id === viewing.id)) rows.push(viewing);
-  rows.sort((a, b) => b.id - a.id);
-  return rows.map((row) => ({
-    value: String(row.id),
-    label:
-      row.id === latestId ? `${historyLabel(row)}（最新）` : historyLabel(row),
-  }));
-}
-
-/**
- * 在"历史"里选中的那一次。seenLatest：选中、或者上次确认它还在的时候，
- * 这条题最近一次记录的版本（latestVersion），用来判断要不要再确认一遍
- */
-export type Picked =
-  | { id: number; seenLatest: string | null; state: "loading" }
-  | {
-      id: number;
-      seenLatest: string | null;
-      state: "ready";
-      result: ResultDetail;
-    }
-  | { id: number; seenLatest: string | null; state: "error"; message: string };
-
 /**
  * 最近一次记录的"版本"：id + 状态。变了说明有新结果，或者检测刚结束
  * （保留条数满了的时候，旧记录就在这一刻被删掉）。从没检测过是 null
@@ -426,89 +375,15 @@ export function latestVersion(
   return latest ? `${latest.id}:${latest.status}` : null;
 }
 
-/**
- * 选中的那一次要不要再去确认它还在：最近一次的版本和上次确认时不一样了。
- * 管理员清空记录后紧接着又检测了一次时，两次刷新之间可能根本看不到"没有记录"（prunePicks 管不到），
- * 只能这样发现；旧记录被保留条数挤掉时也一样。
- * 正在载入的不用（载入本身就是确认），没有最近一次的交给 prunePicks。
- */
-export function shouldRecheckPick(
-  picked: Picked | null,
-  latest: string | null,
-): boolean {
-  return (
-    picked !== null &&
-    picked.state !== "loading" &&
-    latest !== null &&
-    picked.seenLatest !== latest
-  );
-}
+/* ------------------------------------------------------------------ */
+/* 模型详情页                                                          */
+/* ------------------------------------------------------------------ */
 
-/** 再去确认的结果：还在、已经没了（404）、没问成（网络之类） */
-export type RecheckOutcome =
-  | { kind: "found"; result: ResultDetail }
-  | { kind: "gone" }
-  | { kind: "failed" };
-
-/**
- * 确认完之后选中的那一次变成什么：没了就作废，回到最新；还在就记下这次确认时的版本。
- * 没问成时原样返回同一个对象（调用方不用更新），等版本再变时再确认，不反复重试。
- */
-export function pickAfterRecheck(
-  picked: Picked,
-  latest: string,
-  outcome: RecheckOutcome,
-): Picked | null {
-  switch (outcome.kind) {
-    case "gone":
-      return null;
-    case "failed":
-      return picked;
-    case "found":
-      // 已经在看的不换结果对象：内容没变，换了会让输出（比如 HTML 预览）重新渲染一遍
-      return picked.state === "ready"
-        ? { ...picked, seenLatest: latest }
-        : {
-            id: picked.id,
-            seenLatest: latest,
-            state: "ready",
-            result: outcome.result,
-          };
-  }
-}
-
-/**
- * 各条检测题在"历史"里选中的那一次（按提示词 id 存），去掉已经作废的：检测题不在了，
- * 或者记录被管理员清空了（连最近一次都没了）。不去掉的话，新结果一来，被删掉的那次又会冒出来。
- * 清空之后两次刷新之间就出了新结果的情况看不到"没有记录"，由 shouldRecheckPick 那边补上。
- * 没有要去掉的就原样返回同一个对象，调用方据此判断要不要更新状态。
- */
-export function prunePicks<T>(
-  picks: Readonly<Record<number, T>>,
-  checks: readonly Pick<BoardCheck, "prompt" | "latest">[],
-): Readonly<Record<number, T>> {
-  const alive = new Set(
-    checks.filter((check) => check.latest).map((check) => check.prompt.id),
-  );
-  const stale = Object.keys(picks)
-    .map(Number)
-    .filter((id) => !alive.has(id));
-  if (stale.length === 0) return picks;
-  const next = { ...picks };
-  for (const id of stale) delete next[id];
-  return next;
-}
-
-/** 完整记录里摘出历史行需要的字段 */
-export function toSummary(result: ResultDetail): ResultSummary {
-  return {
-    id: result.id,
-    status: result.status,
-    startedAt: result.startedAt,
-    finishedAt: result.finishedAt,
-    durationMs: result.durationMs,
-    trigger: result.trigger,
-  };
+/** 模型详情页的地址；带上提示词就直接打开那道题 */
+export function modelPath(modelId: number, promptId?: number): string {
+  return promptId === undefined
+    ? `/models/${modelId}`
+    : `/models/${modelId}?prompt=${promptId}`;
 }
 
 /* ------------------------------------------------------------------ */

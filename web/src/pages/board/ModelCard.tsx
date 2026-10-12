@@ -9,6 +9,7 @@ import {
   TagPair,
 } from "@endfield-ui/react";
 import { useState, type ReactNode } from "react";
+import { Link } from "react-router";
 import type { BoardCheck, BoardModel } from "../../../../shared/types.ts";
 import {
   formatDateTime,
@@ -22,53 +23,30 @@ import {
   elapsedText,
   modelAnchor,
   modelHeading,
+  modelPath,
   nextRunText,
   pickTab,
-  prunePicks,
   runningCheck,
-  type Picked,
 } from "./board-logic";
 import { CheckView } from "./CheckView";
 import { useNow } from "./now";
 import { StatusMark } from "./StatusMark";
 
-/** 一个模型一张卡：标题、设置、状态，下面是它的各条检测题 */
+/** 一个模型一张卡：标题、设置、状态，下面是它各条检测题的最新结果 */
 export function ModelCard({ model }: { model: BoardModel }) {
   const { title, modelId } = modelHeading(model);
   const [tab, setTab] = useState<string | null>(null);
   const active = pickTab(model.checks, tab);
   const [firstCheck] = model.checks;
-
-  // 各条题在"历史"里选中的那一次，按提示词 id 存在这里而不是题里面：
-  // 未选中的页签不渲染内容，放在题里面的话一切换就丢了
-  const [pickedState, setPickedState] = useState<
-    Readonly<Record<number, Picked>>
-  >({});
-  // 检测题被撤掉、或者记录被管理员清空时，选中的那次作废，新结果来了也不再冒出来。
-  // 清空后两次刷新之间就出了新结果（这里看不到"没有记录"）的，由 CheckView 去确认还在不在
-  const picks = prunePicks(pickedState, model.checks);
-  if (picks !== pickedState) setPickedState(picks);
-  const checkView = (check: BoardCheck, single: boolean) => {
-    const promptId = check.prompt.id;
-    // 按提示词区分实例：只有一条题时换了一道题，展开之类的状态不带过去
-    return (
-      <CheckView
-        key={promptId}
-        model={model}
-        check={check}
-        single={single}
-        picked={picks[promptId] ?? null}
-        onPickedChange={(next) =>
-          setPickedState((prev) => {
-            const copy = { ...prev };
-            if (next) copy[promptId] = next;
-            else delete copy[promptId];
-            return copy;
-          })
-        }
-      />
-    );
-  };
+  // 按提示词区分实例：只有一条题时换了一道题，展开之类的状态不带过去
+  const checkView = (check: BoardCheck, single: boolean) => (
+    <CheckView
+      key={check.prompt.id}
+      model={model}
+      check={check}
+      single={single}
+    />
+  );
 
   let body: ReactNode;
   if (!firstCheck) {
@@ -122,9 +100,13 @@ export function ModelCard({ model }: { model: BoardModel }) {
       <header className="flex flex-wrap items-start justify-between gap-x-4 gap-y-2 border-b border-line px-3 py-3">
         <div className="flex min-w-0 flex-1 basis-56 flex-col gap-2">
           <h3 className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-            <span className="text-base leading-snug font-bold wrap-anywhere">
+            <Link
+              to={modelPath(model.id)}
+              title="查看这个模型的详情和历史记录"
+              className="text-base leading-snug font-bold wrap-anywhere underline-offset-4 hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+            >
               {title}
-            </span>
+            </Link>
             {modelId && (
               <span className="font-mono text-xs text-ink-tertiary wrap-anywhere">
                 {modelId}

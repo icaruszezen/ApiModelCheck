@@ -1,55 +1,36 @@
 import {
-  Button,
   EmptyState,
-  IconButton,
   PageHeader,
-  RecIndicator,
   SectionTitle,
-  Spinner,
   Stat,
-  StatusWarning,
   Toc,
   TocItem,
-  Tooltip,
-  TopBar,
 } from "@endfield-ui/react";
-import { useEffect, useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
+import { useLocation, useNavigationType } from "react-router";
 import { ENDPOINT_META } from "../../../../shared/endpoints.ts";
 import type { BoardChannel, BoardResponse } from "../../../../shared/types.ts";
-import { BrandMark } from "../../components/BrandMark";
-import { RefreshIcon } from "../../components/icons";
-import { ThemeToggle } from "../../components/ThemeToggle";
 import { formatDateTime } from "../../lib/format";
 import {
   POLL_ACTIVE_MS,
   POLL_IDLE_MS,
   channelAnchor,
   computeBoardStats,
-  formatClock,
-  isBoardActive,
   relativeParts,
   tocEntries,
 } from "./board-logic";
 import { BoardSkeleton } from "./BoardSkeleton";
 import { ModelCard } from "./ModelCard";
-import { NowProvider, useNow } from "./now";
-import { useBoard, type BoardFeed } from "./use-board";
+import { useNow } from "./now";
+import { PublicShell, RetryButton, useDocumentTitle } from "./PublicShell";
+import { useBoard } from "./use-board";
 
-/** 前台检测页（/）：所有启用的渠道、模型和它们最近的检测结果 */
+/** 前台检测页（/）：所有启用的渠道、模型和它们最新一次的检测结果 */
 export function BoardPage() {
   const feed = useBoard();
   const { data, error } = feed;
-  const active = isBoardActive(data);
-  const siteTitle = data?.site.title;
-
-  useEffect(() => {
-    if (!siteTitle) return;
-    const previous = document.title;
-    document.title = siteTitle;
-    return () => {
-      document.title = previous;
-    };
-  }, [siteTitle]);
+  useDocumentTitle(data?.site.title);
+  useScrollPosition(data !== undefined);
 
   let content: ReactNode;
   if (data) {
@@ -72,25 +53,37 @@ export function BoardPage() {
     content = <BoardSkeleton />;
   }
 
-  return (
-    <NowProvider offset={feed.offset} fast={active}>
-      <div className="flex min-h-dvh flex-col bg-surface text-ink">
-        <TopBar
-          brand={<BrandMark title={siteTitle} className="min-w-0" />}
-          tools={
-            <>
-              <SyncStatus feed={feed} active={active} />
-              <RefreshButton refresh={feed.refresh} />
-              <ThemeToggle />
-            </>
-          }
-        />
-        <main className="mx-auto w-full max-w-[105rem] flex-1 px-4 pt-8 pb-16 sm:px-6 sm:pt-10 lg:px-8">
-          {content}
-        </main>
-      </div>
-    </NowProvider>
+  return <PublicShell feed={feed}>{content}</PublicShell>;
+}
+
+/** 离开首页时滚到的位置；用浏览器的后退回到首页时回到这里 */
+let savedScroll = 0;
+
+/**
+ * 首页的滚动位置：从模型详情页后退回来时回到原来的位置；地址带着某张卡片的锚点
+ * （详情页的返回按钮）时，数据一到就滚到那张卡片。数据还没到时页面只有骨架，滚不过去，等数据到了再滚
+ */
+function useScrollPosition(ready: boolean) {
+  const { hash, key } = useLocation();
+  const navigation = useNavigationType();
+  const done = useRef<string | null>(null);
+
+  useLayoutEffect(
+    () => () => {
+      savedScroll = window.scrollY;
+    },
+    [],
   );
+
+  useLayoutEffect(() => {
+    if (!ready || done.current === key) return;
+    done.current = key;
+    if (hash) {
+      document.getElementById(decodeURIComponent(hash.slice(1)))?.scrollIntoView();
+    } else if (navigation === "POP" && savedScroll > 0) {
+      window.scrollTo(0, savedScroll);
+    }
+  }, [ready, hash, key, navigation]);
 }
 
 function BoardView({ board }: { board: BoardResponse }) {
@@ -212,90 +205,5 @@ function LastCheckStat({ at }: { at: string | null }) {
       unit={unit ?? undefined}
       title={at ? formatDateTime(at) : undefined}
     />
-  );
-}
-
-/** 顶栏上的刷新状态：失败时给一个不打扰的提示，有检测在进行时亮 LIVE，平时写更新时间 */
-function SyncStatus({ feed, active }: { feed: BoardFeed; active: boolean }) {
-  const failed = feed.data !== undefined && feed.error !== undefined;
-  let visible: ReactNode = null;
-  // 窄屏上顶栏要先让给站点标题：只有"刷新失败"在窄屏上也显示
-  let wrapper = "hidden sm:inline-flex";
-  if (failed) {
-    wrapper = "inline-flex";
-    visible = (
-      <span
-        className="inline-flex items-center gap-1.5 text-xs text-warning"
-        title={feed.error?.message}
-      >
-        <StatusWarning size={16} />
-        <span>刷新失败</span>
-        {feed.updatedAt !== null && (
-          <span className="hidden font-tech text-ink-tertiary tabular-nums md:inline">
-            · 显示的是 {formatClock(feed.updatedAt)} 的数据
-          </span>
-        )}
-      </span>
-    );
-  } else if (active) {
-    visible = <RecIndicator label="LIVE" />;
-  } else if (feed.updatedAt !== null) {
-    visible = (
-      <span className="font-tech text-xs text-ink-tertiary tabular-nums">
-        更新于 {formatClock(feed.updatedAt)}
-      </span>
-    );
-  }
-  return (
-    <>
-      {visible && (
-        <span className={`${wrapper} mr-2 items-center`}>{visible}</span>
-      )}
-      {/* 常驻的播报区：只在刷新失败时有字，平时每次刷新都不出声 */}
-      <span role="status" className="sr-only">
-        {failed
-          ? `刷新失败：${feed.error?.message ?? ""}，稍后会自动重试。`
-          : ""}
-      </span>
-    </>
-  );
-}
-
-function useBusy(action: () => Promise<void>) {
-  const [busy, setBusy] = useState(false);
-  const run = async () => {
-    if (busy) return;
-    setBusy(true);
-    try {
-      await action();
-    } finally {
-      setBusy(false);
-    }
-  };
-  return [busy, run] as const;
-}
-
-/** 手动刷新。只有点了它才转圈，后台的定时刷新不惊动它 */
-function RefreshButton({ refresh }: { refresh: () => Promise<void> }) {
-  const [busy, run] = useBusy(refresh);
-  return (
-    <Tooltip content="立即刷新">
-      <IconButton
-        aria-label="立即刷新"
-        aria-busy={busy || undefined}
-        onClick={() => void run()}
-      >
-        {busy ? <Spinner label={null} /> : <RefreshIcon />}
-      </IconButton>
-    </Tooltip>
-  );
-}
-
-function RetryButton({ refresh }: { refresh: () => Promise<void> }) {
-  const [busy, run] = useBusy(refresh);
-  return (
-    <Button loading={busy} onClick={() => void run()}>
-      重试
-    </Button>
   );
 }

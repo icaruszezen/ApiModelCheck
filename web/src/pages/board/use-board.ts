@@ -35,11 +35,21 @@ const INITIAL: FeedState = {
 };
 
 /**
+ * 最近一次拿到的数据，留到下一个页面：从首页点进模型详情页、再退回来时先用它画出整页，
+ * 不用先闪一下骨架；退回首页时也才能回到原来滚到的位置。新数据照常马上去拉
+ */
+let lastFeed: Pick<FeedState, "data" | "updatedAt" | "offset"> | undefined;
+
+function initialState(): FeedState {
+  return lastFeed ? { ...INITIAL, ...lastFeed } : INITIAL;
+}
+
+/**
  * 定时拉取前台看板。平时 30 秒一次，有检测在进行时 3 秒一次，
  * 快到某个模型的下次检测时间时在到点后不久拉一次；页面被切到后台时停下，切回来立刻刷新一次。连续失败时退避。
  */
 export function useBoard(): BoardFeed {
-  const [state, setState] = useState<FeedState>(INITIAL);
+  const [state, setState] = useState<FeedState>(initialState);
   const refreshRef = useRef<() => Promise<void>>(() => Promise.resolve());
 
   useEffect(() => {
@@ -75,6 +85,7 @@ export function useBoard(): BoardFeed {
           lastData = data;
           lastOffset = clockOffset(data.generatedAt, receivedAt);
           failures = 0;
+          lastFeed = { data, updatedAt: receivedAt, offset: lastOffset };
           setState({
             data,
             error: undefined,

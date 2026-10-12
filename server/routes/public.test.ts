@@ -231,6 +231,41 @@ describe("GET /api/public/history", () => {
       await get(app, `/api/public/history?modelId=${m}&promptId=${p}&limit=500`)
     ).json()) as HistoryResponse;
     expect(big.items).toHaveLength(25);
+    expect(big.hasMore).toBe(false);
+  });
+
+  it("before 翻页：只给更早的记录，hasMore 说明后面还有没有", async () => {
+    const ch = channel();
+    const p = prompt("题");
+    const m = model(ch, { promptIds: [p] });
+    const ids = Array.from({ length: 7 }, () => result(m, p));
+    const app = makeApp();
+    const page = async (query: string) =>
+      (await (
+        await get(app, `/api/public/history?modelId=${m}&promptId=${p}${query}`)
+      ).json()) as HistoryResponse;
+
+    const first = await page("&limit=3");
+    expect(first.items.map((i) => i.id)).toEqual([ids[6], ids[5], ids[4]]);
+    expect(first.hasMore).toBe(true);
+    const second = await page(`&limit=3&before=${ids[4]}`);
+    expect(second.items.map((i) => i.id)).toEqual([ids[3], ids[2], ids[1]]);
+    expect(second.hasMore).toBe(true);
+    const last = await page(`&limit=3&before=${ids[1]}`);
+    expect(last.items.map((i) => i.id)).toEqual([ids[0]]);
+    expect(last.hasMore).toBe(false);
+    // 刚好取完时也不说还有
+    expect((await page("&limit=7")).hasMore).toBe(false);
+    expect((await page(`&before=${ids[0]}`)).items).toEqual([]);
+
+    for (const bad of ["0", "-1", "x", "1.5"]) {
+      const res = await get(
+        app,
+        `/api/public/history?modelId=${m}&promptId=${p}&before=${bad}`,
+      );
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "before 必须是正整数" });
+    }
   });
 
   it("参数不对 400；模型或渠道停用 / 不存在、提示词停用时 404", async () => {

@@ -116,10 +116,14 @@ function query(params: Record<string, string | number | undefined | null>) {
 
 export const publicApi = {
   board: () => request<BoardResponse>("GET", "/api/public/board"),
-  history: (modelId: number, promptId: number, limit = 20) =>
+  history: (
+    modelId: number,
+    promptId: number,
+    { limit = 20, before }: { limit?: number; before?: number } = {},
+  ) =>
     request<HistoryResponse>(
       "GET",
-      `/api/public/history${query({ modelId, promptId, limit })}`,
+      `/api/public/history${query({ modelId, promptId, limit, before })}`,
     ),
   result: (id: number) =>
     request<ResultDetail>("GET", `/api/public/results/${id}`),

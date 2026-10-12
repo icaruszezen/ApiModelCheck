@@ -4,7 +4,7 @@
 import { Hono } from "hono";
 import type { HistoryResponse } from "../../shared/types.ts";
 import type { Repo, RuntimeView } from "../repo.ts";
-import { parseId, parseLimit } from "../validation.ts";
+import { parseId, parseLimit, parseOptionalInt } from "../validation.ts";
 
 export interface PublicRoutesDeps {
   repo: Repo;
@@ -26,12 +26,20 @@ export function publicRoutes({ repo, runtime }: PublicRoutesDeps) {
     if (limit === null) {
       return c.json({ error: "limit 必须是正整数" }, 400);
     }
+    // 翻页：只要 id 比 before 小的（更早的）记录
+    const before = parseOptionalInt(c.req.query("before"));
+    if (before === null) {
+      return c.json({ error: "before 必须是正整数" }, 400);
+    }
     // 停用 / 不存在 / 已取消分配的"模型 × 提示词"对访客不可见
     if (!repo.isCheckVisible(modelId, promptId)) {
       return c.json({ error: "不存在" }, 404);
     }
+    // 多取一条，看看后面还有没有
+    const rows = repo.listHistory(modelId, promptId, limit + 1, before);
     const body: HistoryResponse = {
-      items: repo.listHistory(modelId, promptId, limit),
+      items: rows.slice(0, limit),
+      hasMore: rows.length > limit,
     };
     return c.json(body);
   });
