@@ -6,9 +6,12 @@ export interface PromptBlockProps {
   content: string;
   /** 正在看的这次结果用的是旧版提示词时，传当时的内容（见 changedSnapshot）；否则 null */
   snapshot: string | null;
-  /** 只有一条检测题、没有页签时，把题目标题写在这里 */
+  /** 只有一条检测题、没有页签时，把题目标题写在这里（紧凑版不写，卡片自己画） */
   title?: string;
-  /** 紧凑版（前台卡片里用）：收起时只留 3 行 */
+  /**
+   * 紧凑版（前台卡片里用）：收起时只留 3 行；没有"提示词"的小标题（只给读屏），
+   * 题目写成淡色的问句，左边一条细线，不垫底色
+   */
   compact?: boolean;
 }
 
@@ -41,6 +44,68 @@ export function PromptBlock({
     return () => observer.disconnect();
   }, [text, expanded]);
 
+  const notice = outdated && (
+    <p className="text-xs text-ink-secondary">
+      {showCurrent
+        ? "这是现在的题目；下面的结果用的是修改前的版本。"
+        : "这次检测用的是修改前的题目，下次检测会用新版本。"}
+      <button
+        type="button"
+        onClick={() => setShowCurrent((value) => !value)}
+        className={cn(
+          "ml-1 text-ink underline underline-offset-2 hover:text-ink-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus",
+          // 卡片里的小字链接：点按区域往四周放大一圈，手机上好点
+          compact && "relative after:absolute after:-inset-x-1 after:-inset-y-2.5 after:content-['']",
+        )}
+      >
+        {showCurrent ? "看检测时的版本" : "看现在的版本"}
+      </button>
+    </p>
+  );
+
+  const chevron = (size: number) => (
+    <ChevronDown
+      size={size}
+      className={cn(
+        "transition-transform duration-(--duration-fast) ease-standard",
+        expanded && "rotate-180",
+      )}
+    />
+  );
+
+  if (compact) {
+    return (
+      <section className="flex min-w-0 flex-col gap-2">
+        <h4 className="sr-only">提示词</h4>
+        {notice}
+        <div className="border-l border-line-strong pl-3">
+          <div
+            ref={textRef}
+            id={textId}
+            className={cn(
+              "text-sm leading-relaxed break-words whitespace-pre-wrap text-ink-secondary",
+              !expanded && "line-clamp-3",
+            )}
+          >
+            {text}
+          </div>
+          {(overflowing || expanded) && (
+            <button
+              type="button"
+              aria-expanded={expanded}
+              aria-controls={textId}
+              onClick={() => setExpanded((value) => !value)}
+              className="mt-0.5 inline-flex min-h-8 items-center gap-1 text-xs text-ink-secondary transition-colors duration-(--duration-fast) ease-standard hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+            >
+              {expanded ? "收起" : "展开全部"}
+              {chevron(12)}
+            </button>
+          )}
+        </div>
+      </section>
+    );
+  }
+
   return (
     <section className="flex min-w-0 flex-col gap-2">
       <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
@@ -53,20 +118,7 @@ export function PromptBlock({
         )}
       </div>
 
-      {outdated && (
-        <p className="text-xs text-ink-secondary">
-          {showCurrent
-            ? "这是现在的题目；下面的结果用的是修改前的版本。"
-            : "这次检测用的是修改前的题目，下次检测会用新版本。"}
-          <button
-            type="button"
-            onClick={() => setShowCurrent((value) => !value)}
-            className="ml-1 text-ink underline underline-offset-2 hover:text-ink-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-          >
-            {showCurrent ? "看检测时的版本" : "看现在的版本"}
-          </button>
-        </p>
-      )}
+      {notice}
 
       <div className="border-l-2 border-line-strong bg-surface-sunken px-3 py-2.5">
         <div
@@ -74,7 +126,7 @@ export function PromptBlock({
           id={textId}
           className={cn(
             "text-sm leading-relaxed break-words whitespace-pre-wrap text-ink",
-            !expanded && (compact ? "line-clamp-3" : "line-clamp-6"),
+            !expanded && "line-clamp-6",
           )}
         >
           {text}
@@ -87,15 +139,7 @@ export function PromptBlock({
             aria-expanded={expanded}
             aria-controls={textId}
             onClick={() => setExpanded((value) => !value)}
-            iconEnd={
-              <ChevronDown
-                size={14}
-                className={cn(
-                  "transition-transform duration-(--duration-fast) ease-standard",
-                  expanded && "rotate-180",
-                )}
-              />
-            }
+            iconEnd={chevron(14)}
           >
             {expanded ? "收起" : "展开全部"}
           </Button>

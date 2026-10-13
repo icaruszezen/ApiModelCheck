@@ -256,6 +256,25 @@ export function checkMark(check: BoardCheck): ResultStatus | null {
   return check.latest?.status ?? null;
 }
 
+/**
+ * 卡片标题旁的提示：各道题最近一次已经结束的结果里，几道失败、几道超时。
+ * 正在检测的题看它上一次的结果：提示不随一轮检测开始而闪动，"检测中"由卡片底部说
+ */
+export function modelProblems(model: Pick<BoardModel, "checks">): {
+  error: number;
+  timeout: number;
+} {
+  let error = 0;
+  let timeout = 0;
+  for (const check of model.checks) {
+    const finished =
+      check.latest?.status === "running" ? check.previous : check.latest;
+    if (finished?.status === "error") error += 1;
+    else if (finished?.status === "timeout") timeout += 1;
+  }
+  return { error, timeout };
+}
+
 /** 当前选中的页签还在就保留，否则回到第一条（检测题被删掉或停用之后） */
 export function pickTab(
   checks: readonly BoardCheck[],

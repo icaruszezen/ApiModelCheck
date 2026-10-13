@@ -28,7 +28,7 @@ export function BoardSkeleton() {
               <Skeleton
                 key={card}
                 className={
-                  ["h-96", "hidden h-96 md:block", "hidden h-96 xl:block"][card]
+                  ["h-104", "hidden h-104 md:block", "hidden h-104 xl:block"][card]
                 }
               />
             ))}

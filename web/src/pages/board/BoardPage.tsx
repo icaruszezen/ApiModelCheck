@@ -183,8 +183,9 @@ function ChannelSection({
           description="管理员添加模型之后，检测结果会显示在这里。"
         />
       ) : (
-        // 宽屏一行三张，平板两张，手机一张
-        <div className="grid grid-cols-1 items-start gap-4 md:grid-cols-2 xl:grid-cols-3">
+        // 宽屏一行三张，平板两张，手机一张。同一排拉成一样高（卡片底部那一行贴底对齐），
+        // 回答再长也在卡片里限高滚动，一排不会被某一张撑得太高
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
           {channel.models.map((model) => (
             <ModelCard key={model.id} model={model} />
           ))}

@@ -21,6 +21,8 @@ export interface EndpointMeta {
   defaultBaseUrl: string;
   /** 一句说明，后台表单里显示 */
   hint: string;
+  /** 正常答完时存下的结束原因（Responses 存的是响应状态）；前台卡片上这种不写 */
+  normalFinish: string;
 }
 
 export const ENDPOINT_META: Record<EndpointType, EndpointMeta> = {
@@ -29,26 +31,35 @@ export const ENDPOINT_META: Record<EndpointType, EndpointMeta> = {
     short: "Chat Completions",
     defaultBaseUrl: "https://api.openai.com/v1",
     hint: "POST {基础地址}/chat/completions（只写域名时先补 /v1）。绝大多数 OpenAI 兼容的中转与开源推理服务用这一种。",
+    normalFinish: "stop",
   },
   "openai-responses": {
     label: "OpenAI Responses",
     short: "Responses",
     defaultBaseUrl: "https://api.openai.com/v1",
     hint: "POST {基础地址}/responses（只写域名时先补 /v1）。OpenAI 新一代接口。",
+    normalFinish: "completed",
   },
   anthropic: {
     label: "Anthropic Messages",
     short: "Messages",
     defaultBaseUrl: "https://api.anthropic.com",
     hint: "POST {基础地址}/v1/messages（地址已以 /v1 这类版本段结尾时不再补 /v1），使用 x-api-key 认证。",
+    normalFinish: "end_turn",
   },
   gemini: {
     label: "Google Gemini",
     short: "Gemini",
     defaultBaseUrl: "https://generativelanguage.googleapis.com",
     hint: "POST {基础地址}/v1beta/models/{模型}:generateContent（地址已以版本段结尾或含 /publishers/ 时不再补 /v1beta），使用 x-goog-api-key 认证。",
+    normalFinish: "STOP",
   },
 };
+
+/** 各种端点正常答完时的结束原因 */
+export const NORMAL_FINISH_REASONS: ReadonlySet<string> = new Set(
+  Object.values(ENDPOINT_META).map((meta) => meta.normalFinish),
+);
 
 export function isEndpointType(value: unknown): value is EndpointType {
   return (

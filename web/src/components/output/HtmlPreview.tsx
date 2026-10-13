@@ -32,6 +32,11 @@ export interface HtmlPreviewProps {
   index?: number;
   /** 小方框的高度（px），默认 360；前台的卡片里矮一些 */
   height?: number;
+  /**
+   * 紧凑版（前台卡片里）：工具条一行放下（预览 / 源码只留图标），不垫凹陷底色；
+   * 结束了却没写完的网页先显示源码，免得一块空白的预览
+   */
+  compact?: boolean;
   className?: string;
 }
 
@@ -48,9 +53,12 @@ export function HtmlPreview({
   running = false,
   index,
   height = BOX_HEIGHT,
+  compact = false,
   className,
 }: HtmlPreviewProps) {
-  const [view, setView] = useState<View>("preview");
+  // 用户没选过时跟着内容走：紧凑版里结束了却没写完的网页看源码，免得一块空白的预览
+  const [chosen, setView] = useState<View | null>(null);
+  const view: View = chosen ?? (compact && !complete && !running ? "source" : "preview");
   const [fullscreen, setFullscreen] = useState(false);
   // 换 key 让 iframe 重新挂载，网页从头再跑一遍（动画放完了、游戏结束了）
   const [runId, setRunId] = useState(0);
@@ -58,52 +66,104 @@ export function HtmlPreview({
   const size = useMemo(() => formatBytes(byteLength(html)), [html]);
   const title = index ? `模型生成的网页 ${index}` : "模型生成的网页";
   const generating = running && !complete;
+  // 紧凑版的图标钮去掉凹陷底色：暗色主题下那是一块纯黑
+  const quiet = compact ? "bg-transparent hover:bg-ink/5" : undefined;
 
   return (
     <div
       role="group"
       aria-label={title}
-      className={cn("min-w-0 border border-line bg-surface-raised", className)}
+      className={cn("min-w-0 border border-line", !compact && "bg-surface-raised", className)}
     >
-      <div className="flex min-h-10 flex-wrap items-center gap-x-3 gap-y-1 border-b border-line bg-surface-sunken py-1 pr-1 pl-3">
-        <span className="flex min-w-0 items-center gap-1.5 text-xs text-ink-secondary">
-          <span className="font-medium text-ink">HTML 网页</span>
-          <span aria-hidden="true">·</span>
-          <span className="font-tech tabular-nums">{size}</span>
+      <div
+        className={cn(
+          "flex items-center border-b border-line",
+          compact
+            ? "min-h-9 gap-2 py-0.5 pr-0.5 pl-2.5"
+            : "min-h-10 flex-wrap gap-x-3 gap-y-1 bg-surface-sunken py-1 pr-1 pl-3",
+        )}
+      >
+        <span
+          className={cn(
+            "flex min-w-0 items-center gap-1.5 text-xs text-ink-secondary",
+            // 紧凑版工具条只有一行：放不下时大小那一截省略掉，标题不截断；
+            // 卡片很窄（320px 宽的手机）时不写大小，标题只写"网页"
+            compact && "overflow-hidden whitespace-nowrap",
+          )}
+        >
+          {compact ? (
+            <span className="shrink-0 font-medium text-ink">
+              <span className="hidden @xs:inline">HTML </span>网页
+            </span>
+          ) : (
+            <span className="font-medium text-ink">HTML 网页</span>
+          )}
+          <span aria-hidden="true" className={compact ? "hidden @xs:inline" : undefined}>
+            ·
+          </span>
+          <span
+            className={cn(
+              "min-w-0 truncate font-tech tabular-nums",
+              compact && "hidden @xs:inline",
+            )}
+          >
+            {size}
+          </span>
           {generating && (
             <>
               <span aria-hidden="true">·</span>
-              <Spinner size="sm" label={null} />
+              <Spinner size="sm" label={null} className={compact ? "size-2.5 shrink-0" : undefined} />
               <span>生成中</span>
             </>
           )}
         </span>
         {!generating && (
-          <div className="ml-auto flex items-center gap-1">
+          <div className={cn("ml-auto flex items-center", compact ? "shrink-0 gap-0.5" : "gap-1")}>
             <SegmentedControl
               size="sm"
               variant="outline"
               aria-label="显示方式"
               value={view}
               onValueChange={(next) => setView(next === "source" ? "source" : "preview")}
+              // 紧凑版选中的那段垫一层淡淡的墨色，不用整块反色：卡片里它太抢眼（暗色主题下是一块白）
+              className={compact ? "mr-1 bg-transparent after:bg-ink/10" : undefined}
             >
-              <Segment value="preview" icon={<EyeIcon />}>
-                预览
-              </Segment>
-              <Segment value="source" icon={<CodeIcon />}>
-                源码
-              </Segment>
+              {compact ? (
+                <>
+                  <Segment value="preview" icon={<EyeIcon />} aria-label="预览" title="预览" className={QUIET_SEGMENT} />
+                  <Segment value="source" icon={<CodeIcon />} aria-label="源码" title="源码" className={QUIET_SEGMENT} />
+                </>
+              ) : (
+                <>
+                  <Segment value="preview" icon={<EyeIcon />}>
+                    预览
+                  </Segment>
+                  <Segment value="source" icon={<CodeIcon />}>
+                    源码
+                  </Segment>
+                </>
+              )}
             </SegmentedControl>
             {view === "preview" && (
               <Tooltip content="重新运行">
-                <IconButton size="sm" aria-label="重新运行" onClick={() => setRunId((id) => id + 1)}>
+                <IconButton
+                  size="sm"
+                  aria-label="重新运行"
+                  className={quiet}
+                  onClick={() => setRunId((id) => id + 1)}
+                >
                   <RefreshIcon />
                 </IconButton>
               </Tooltip>
             )}
-            <CopyButton text={html} label="复制网页源码" />
+            <CopyButton text={html} label="复制网页源码" className={quiet} />
             <Tooltip content="全屏查看">
-              <IconButton size="sm" aria-label="全屏查看" onClick={() => setFullscreen(true)}>
+              <IconButton
+                size="sm"
+                aria-label="全屏查看"
+                className={quiet}
+                onClick={() => setFullscreen(true)}
+              >
                 <ExpandIcon />
               </IconButton>
             </Tooltip>
@@ -112,21 +172,29 @@ export function HtmlPreview({
       </div>
 
       {!complete && !running && (
-        <p className="flex items-center gap-2 border-b border-line px-3 py-1.5 text-xs text-ink-secondary">
+        <p
+          className={cn(
+            "flex items-center gap-2 border-b border-line text-xs text-ink-secondary",
+            compact ? "px-2.5 py-1" : "px-3 py-1.5",
+          )}
+        >
           <StatusWarning size={14} className="shrink-0 text-warning" />
           网页没有写完（输出可能被截断）
         </p>
       )}
 
       {generating ? (
-        <GeneratingTail html={html} height={height} />
+        <GeneratingTail html={html} height={height} compact={compact} />
       ) : view === "preview" ? (
         <SandboxFrame key={runId} srcDoc={srcDoc} title={title} height={height} />
       ) : (
         <pre
           tabIndex={0}
           aria-label="网页源码"
-          className="overflow-auto bg-surface-sunken p-3 font-mono text-xs leading-relaxed text-ink focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus"
+          className={cn(
+            "overflow-auto font-mono text-xs leading-relaxed text-ink focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus",
+            compact ? "p-2.5" : "bg-surface-sunken p-3",
+          )}
           style={{ height }}
         >
           <code>{html}</code>
@@ -140,13 +208,28 @@ export function HtmlPreview({
   );
 }
 
+/** 紧凑版的分段：只有图标，选中的字色照常（高对比模式下仍由系统的选中色说了算） */
+const QUIET_SEGMENT =
+  "px-2 not-forced-colors:data-selected:bg-transparent not-forced-colors:data-selected:text-ink";
+
 /** 生成中：源码的最后几十行贴底显示，上沿淡出 */
-function GeneratingTail({ html, height }: { html: string; height: number }) {
+function GeneratingTail({
+  html,
+  height,
+  compact,
+}: {
+  html: string;
+  height: number;
+  compact: boolean;
+}) {
   const tail = tailLines(html, TAIL_LINES);
   return (
     <div className="flex flex-col">
       <div
-        className="relative flex flex-col justify-end overflow-hidden bg-surface-sunken"
+        className={cn(
+          "relative flex flex-col justify-end overflow-hidden",
+          !compact && "bg-surface-sunken",
+        )}
         style={{ height: height - 40 }}
       >
         <pre className="shrink-0 px-3 py-2 font-mono text-xs leading-relaxed break-all whitespace-pre-wrap text-ink-secondary">
@@ -154,11 +237,19 @@ function GeneratingTail({ html, height }: { html: string; height: number }) {
         </pre>
         <div
           aria-hidden="true"
-          className="pointer-events-none absolute inset-x-0 top-0 h-12 bg-linear-to-b from-surface-sunken to-transparent"
+          className={cn(
+            "pointer-events-none absolute inset-x-0 top-0 h-12 bg-linear-to-b to-transparent",
+            compact ? "from-surface-raised" : "from-surface-sunken",
+          )}
         />
       </div>
-      <p className="flex items-center gap-2 border-t border-line px-3 py-2 text-sm text-ink-secondary">
-        <Spinner size="sm" label={null} />
+      <p
+        className={cn(
+          "flex items-center gap-2 border-t border-line text-ink-secondary",
+          compact ? "px-2.5 py-1.5 text-xs" : "px-3 py-2 text-sm",
+        )}
+      >
+        <Spinner size="sm" label={null} className={compact ? "size-2.5" : undefined} />
         网页生成中，写完后自动预览
       </p>
     </div>

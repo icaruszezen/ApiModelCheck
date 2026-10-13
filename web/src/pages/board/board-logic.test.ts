@@ -24,6 +24,7 @@ import {
   latestVersion,
   modelHeading,
   modelPath,
+  modelProblems,
   nextPollDelay,
   nextRunText,
   pickTab,
@@ -409,6 +410,41 @@ describe("checkMark / pickTab", () => {
     expect(pickTab(checks, "9")).toBe("4");
     expect(pickTab(checks, null)).toBe("4");
     expect(pickTab([], "4")).toBeNull();
+  });
+});
+
+describe("modelProblems", () => {
+  it("数各道题最近一次的失败和超时；检测中的看上一次", () => {
+    const ok = result();
+    expect(modelProblems(model())).toEqual({ error: 0, timeout: 0 });
+    expect(modelProblems(model({ checks: [check(1), check(2, ok)] }))).toEqual({
+      error: 0,
+      timeout: 0,
+    });
+    expect(
+      modelProblems(
+        model({
+          checks: [
+            check(1, result({ status: "timeout" })),
+            check(2, result({ status: "error" })),
+            check(3, result({ status: "error" })),
+            check(4, ok),
+          ],
+        }),
+      ),
+    ).toEqual({ error: 2, timeout: 1 });
+    // 在跑的那道题看它上一次结束的结果；没有上一次就不算
+    expect(
+      modelProblems(
+        model({
+          checks: [
+            check(1, result({ status: "running" }), result({ status: "timeout" })),
+            check(2, result({ status: "running" })),
+            check(3, result({ status: "running" }), ok),
+          ],
+        }),
+      ),
+    ).toEqual({ error: 0, timeout: 1 });
   });
 });
 
